@@ -58,11 +58,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # 先配置静态文件（优先级更高）
+    _configure_static_files(app)
+
     # 注册路由
     _register_routes(app)
-
-    # 配置静态文件服务
-    _configure_static_files(app)
 
     return app
 
@@ -85,14 +85,22 @@ def _register_routes(app: FastAPI):
 
 def _configure_static_files(app: FastAPI):
     """配置静态文件服务"""
+    from pathlib import Path
     import os
-    frontend_path = os.path.join(os.path.dirname(__file__), "../../frontend/dist")
 
-    if os.path.exists(frontend_path):
-        app.mount("/static", StaticFiles(directory=frontend_path), name="static")
-        logger.info(f"静态文件服务已启用: {frontend_path}")
+    # 获取 worktree 根目录
+    worktree_root = Path(__file__).parent.parent.parent
+    frontend_path = worktree_root / "frontend" / "dist"
+
+    logger.info(f"查找前端路径: {frontend_path}")
+    logger.info(f"路径存在? {frontend_path.exists()}")
+
+    if frontend_path.exists():
+        # 挂载到根路径，支持 SPA 路由
+        app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
+        logger.info(f"✅ 静态文件服务已启用: {frontend_path}")
     else:
-        logger.warning(f"前端构建目录不存在: {frontend_path}")
+        logger.warning(f"❌ 前端构建目录不存在: {frontend_path}")
 
 
 # 创建应用实例
