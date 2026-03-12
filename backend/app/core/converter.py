@@ -106,7 +106,7 @@ class ModelConverter:
         if progress_callback:
             progress_callback(70, "正在生成 NE301 部署包...")
 
-        from app.core.docker_adapter import DockerToolChainAdapter
+        from .docker_adapter import DockerToolChainAdapter
 
         docker = DockerToolChainAdapter()
         bin_path = docker.convert_model(
@@ -152,14 +152,34 @@ class ModelConverter:
             int8=False  # 先不量化，后面用 ST 脚本量化
         )
 
-        # Ultralytics 会生成与模型同名的 .tflite 文件
-        tflite_path = Path(model_path).stem + ".tflite"
+        # Ultralytics 会生成 {stem}_float32.tflite 文件
+        # 文件可能生成在模型所在目录或当前工作目录
+        model_dir = Path(model_path).parent
+        model_stem = Path(model_path).stem
 
-        if not Path(tflite_path).exists():
-            raise FileNotFoundError(f"TFLite 导出失败: {tflite_path}")
+        # 尝试多个可能的路径
+        # 注意：YOLOv8 可能将 TFLite 文件放在 SavedModel 子目录中
+        saved_model_dir = model_dir / f"{model_stem}_saved_model"
+        possible_paths = [
+            saved_model_dir / f"{model_stem}_float32.tflite",  # SavedModel 子目录（新版本 YOLO）
+            saved_model_dir / f"{model_stem}.tflite",           # SavedModel 子目录（旧命名）
+            model_dir / f"{model_stem}_float32.tflite",         # 模型所在目录
+            Path(f"{model_stem}_float32.tflite"),               # 当前工作目录
+            model_dir / f"{model_stem}.tflite",                 # 旧命名方式（模型目录）
+            Path(f"{model_stem}.tflite")                        # 旧命名方式（当前目录）
+        ]
+
+        tflite_path = None
+        for path in possible_paths:
+            if path.exists():
+                tflite_path = path
+                break
+
+        if tflite_path is None:
+            raise FileNotFoundError(f"TFLite 导出失败: 未找到生成的文件。已尝试: {possible_paths}")
 
         logger.info(f"✅ TFLite 导出成功: {tflite_path}")
-        return Path(tflite_path)
+        return tflite_path
 
     def _quantize_tflite(
         self,
@@ -186,23 +206,40 @@ class ModelConverter:
         """
         logger.info(f"步骤 2: 量化 {tflite_path}")
 
-        # 首先将 TFLite 转换为 SavedModel 格式（tflite_quant.py 需要）
-        saved_model_path = self._convert_tflite_to_saved_model(tflite_path)
+        # 获取对应的 SavedModel 目录（Ultralytics 导出时已生成）
+        saved_model_path = self._get_saved_model_path(tflite_path)
 
-        # 准备配置文件
-        config_path = self._prepare_quant_config(
-            saved_model_path,
-            input_size,
-            calib_dataset_path
-        )
+        # 准备校准数据集路径
+        if calib_dataset_path:
+            calib_path = str(Path(calib_dataset_path).resolve())
+        else:
+            # 创建默认校准数据集目录（空目录，使用 fake quantization）
+            default_calib = self.work_dir / "default_calib"
+            default_calib.mkdir(exist_ok=True)
+            calib_path = str(default_calib.resolve())
 
-        # 执行量化脚本
+        # 准备输出目录（使用绝对路径）
+        export_path = str((self.work_dir / "quantized_models").resolve())
+
+        logger.info(f"SavedModel 路径: {saved_model_path}")
+        logger.info(f"校准数据集: {calib_path}")
+        logger.info(f"输出目录: {export_path}")
+
+        # 执行量化脚本，使用 Hydra override 语法传递绝对路径
+        # 这样可以绕过配置文件加载问题，直接设置参数
+        # 注意：使用 sys.executable 确保使用当前 Python 环境
+        import sys
+
         cmd = [
-            "python",
+            sys.executable,  # 使用当前 Python 解释器
             str(self.quant_script),
-            "--config-name", "user_config_quant",
-            "--config-dir", str(self.tools_dir)
+            f"model.model_path={saved_model_path.resolve()}",
+            f"model.input_shape=[{input_size},{input_size},3]",
+            f"quantization.calib_dataset_path={calib_path}",
+            f"quantization.export_path={export_path}"
         ]
+
+        logger.info(f"执行命令: {' '.join(cmd)}")
 
         result = subprocess.run(
             cmd,
@@ -212,7 +249,9 @@ class ModelConverter:
         )
 
         if result.returncode != 0:
+            logger.error(f"量化命令: {' '.join(cmd)}")
             logger.error(f"量化失败: {result.stderr}")
+            logger.error(f"标准输出: {result.stdout}")
             raise RuntimeError(f"TFLite 量化失败: {result.stderr}")
 
         # 查找生成的量化模型
@@ -225,50 +264,50 @@ class ModelConverter:
         logger.info(f"✅ 量化成功: {quantized_models[0]}")
         return quantized_models[0]
 
-    def _convert_tflite_to_saved_model(self, tflite_path: Path) -> Path:
+    def _get_saved_model_path(
+        self,
+        tflite_path: Path
+    ) -> Path:
         """
-        将 TFLite 模型转换为 SavedModel 格式
+        获取对应的 SavedModel 目录路径
+
+        注意：Ultralytics 导出 TFLite 时会同时生成 SavedModel 格式
+        我们直接使用那个 SavedModel，而不是从 TFLite 转换
 
         Args:
             tflite_path: TFLite 模型路径
 
         Returns:
             SavedModel 目录路径
+
+        Raises:
+            FileNotFoundError: 如果 SavedModel 目录不存在
         """
-        import tensorflow as tf
+        # TFLite 文件在 SavedModel 子目录中
+        # 例如: best_saved_model/best_float32.tflite
+        # SavedModel 目录就是: best_saved_model/
+        if tflite_path.parent.name.endswith("_saved_model"):
+            saved_model_path = tflite_path.parent
+        else:
+            # 如果 TFLite 不在 SavedModel 子目录中，
+            # 尝试找到对应的 SavedModel 目录
+            model_stem = tflite_path.stem.replace("_float32", "").replace("_int8", "")
+            saved_model_path = tflite_path.parent / f"{model_stem}_saved_model"
 
-        # 加载 TFLite 模型
-        interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
-        interpreter.allocate_tensors()
-
-        # 获取输入输出详情
-        input_details = interpreter.get_input_details()
-        output_details = interpreter.get_output_details()
-
-        # 创建 SavedModel
-        saved_model_path = self.work_dir / "saved_model"
-
-        # 定义签名
-        @tf.function(input_signature=[
-            tf.TensorSpec(
-                shape=input_details[0]['shape'],
-                dtype=tf.float32,
-                name=input_details[0]['name']
+        if not saved_model_path.exists():
+            raise FileNotFoundError(
+                f"SavedModel 目录不存在: {saved_model_path}\n"
+                f"请确保 Ultralytics 导出时生成了 SavedModel 格式"
             )
-        ])
-        def model_fn(inputs):
-            interpreter.set_tensor(input_details[0]['index'], inputs)
-            interpreter.invoke()
-            output = interpreter.get_tensor(output_details[0]['index'])
-            return {output_details[0]['name']: output}
 
-        # 保存为 SavedModel 格式
-        tf.saved_model.save(
-            model_fn,
-            str(saved_model_path),
-            signatures=tf.saved_model.serve(model_fn)
-        )
+        # 验证这是有效的 SavedModel
+        if not (saved_model_path / "saved_model.pb").exists():
+            raise FileNotFoundError(
+                f"目录不是有效的 SavedModel: {saved_model_path}\n"
+                f"缺少 saved_model.pb 文件"
+            )
 
+        logger.info(f"✅ 找到 SavedModel: {saved_model_path}")
         return saved_model_path
 
     def _prepare_quant_config(
@@ -295,16 +334,20 @@ class ModelConverter:
             config = yaml.safe_load(f)
 
         # 更新配置
-        config["model"]["model_path"] = str(saved_model_path)
+        # 使用绝对路径避免 Hydra 执行目录问题
+        config["model"]["model_path"] = str(saved_model_path.resolve())
         config["model"]["input_shape"] = [input_size, input_size, 3]
 
         if calib_dataset_path:
-            config["quantization"]["calib_dataset_path"] = calib_dataset_path
+            config["quantization"]["calib_dataset_path"] = str(Path(calib_dataset_path).resolve())
         else:
             # 使用默认的少量图片
             config["quantization"]["calib_dataset_path"] = str(
-                self.work_dir / "default_calib"
+                (self.work_dir / "default_calib").resolve()
             )
+
+        # 导出路径也使用绝对路径
+        config["quantization"]["export_path"] = str((self.work_dir / "quantized_models").resolve())
 
         # 保存到工作目录
         config_path = self.work_dir / "user_config_quant.yaml"

@@ -10,11 +10,11 @@ import os
 import tempfile
 from typing import Optional
 
-from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException
+from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException, Form
 from fastapi.responses import JSONResponse
 
-from app.models.schemas import ConversionConfig, ClassDefinition
-from app.core.task_manager import get_task_manager
+from ..models.schemas import ConversionConfig, ClassDefinition
+from ..core.task_manager import get_task_manager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ def _validate_file_extension(filename: str, allowed_extensions: set[str]) -> boo
 async def convert_model(
     background_tasks: BackgroundTasks,
     model_file: UploadFile = File(...),
-    config_file: UploadFile = File(...),
+    config: str = Form(...),
     yaml_file: Optional[UploadFile] = File(None),
     calibration_dataset: Optional[UploadFile] = File(None)
 ):
@@ -45,7 +45,7 @@ async def convert_model(
 
     Args:
         model_file: PyTorch 模型文件 (.pt, .pth, .onnx)
-        config_file: 转换配置 JSON 文件
+        config: 转换配置 JSON 字符串
         yaml_file: (可选) 类别定义 YAML 文件
         calibration_dataset: (可选) 校准数据集 ZIP 文件 (32-100 张图片)
 
@@ -59,11 +59,13 @@ async def convert_model(
             detail=f"不支持的模型文件格式。允许的格式: {', '.join(ALLOWED_MODEL_EXTENSIONS)}"
         )
 
-    # 2. 验证配置文件
-    if not _validate_file_extension(config_file.filename, ALLOWED_CONFIG_EXTENSIONS):
+    # 2. 解析并验证配置 JSON 字符串
+    try:
+        config_dict = json.loads(config)
+    except json.JSONDecodeError:
         raise HTTPException(
             status_code=400,
-            detail=f"配置文件必须是 JSON 格式"
+            detail="配置格式无效，必须是有效的 JSON 字符串"
         )
 
     # 3. 验证 YAML 文件(如果提供)
@@ -96,12 +98,8 @@ async def convert_model(
             )
 
     try:
-        # 4. 读取并验证配置文件
-        config_content = await config_file.read()
-        config_dict = json.loads(config_content)
-        
-        # Pydantic 验证 - 会抛出 ValidationError
-        config = ConversionConfig(**config_dict)
+        # 4. Pydantic 验证配置
+        validated_config = ConversionConfig(**config_dict)
 
         # 5. 读取 YAML 文件(如果提供)
         class_def = None
@@ -120,6 +118,7 @@ async def convert_model(
 
         yaml_path = None
         if yaml_file:
+            yaml_content = await yaml_file.read()
             yaml_path = os.path.join(temp_dir, yaml_file.filename)
             with open(yaml_path, "wb") as f:
                 f.write(yaml_content)
@@ -162,11 +161,11 @@ async def convert_model(
 
         # 7. 创建任务
         task_manager = get_task_manager()
-        task_id = task_manager.create_task(config)
+        task_id = task_manager.create_task(validated_config)
 
         logger.info(f"创建转换任务: {task_id}")
         logger.info(f"模型文件: {model_file.filename}")
-        logger.info(f"配置: {config.model_type}, {config.input_size}x{config.input_size}")
+        logger.info(f"配置: {validated_config.model_type}, {validated_config.input_size}x{validated_config.input_size}")
         if calibration_path:
             logger.info(f"校准数据集: {calibration_dataset.filename}")
 
@@ -175,7 +174,7 @@ async def convert_model(
             _run_conversion,
             task_id,
             model_path,
-            config,
+            validated_config,
             yaml_path,
             calibration_path
         )
@@ -222,7 +221,7 @@ async def _run_conversion(
         yaml_path: YAML 文件路径（可选）
         calibration_path: 校准数据集路径（可选）
     """
-    from app.core.converter import ModelConverter
+    from ..core.converter import ModelConverter
 
     task_manager = get_task_manager()
 
@@ -257,3 +256,7 @@ async def _run_conversion(
         logger.error(f"❌ 任务 {task_id} 转换失败: {str(e)}")
         task_manager.fail_task(task_id, str(e))
         raise
+
+@router.get("/test")
+async def test_endpoint():
+    return {"message": "Test works!"}

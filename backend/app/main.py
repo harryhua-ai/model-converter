@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
 
     # 检查环境状态
-    from app.core.environment import EnvironmentDetector
+    from .core.environment import EnvironmentDetector
     detector = EnvironmentDetector()
     status = detector.check()
 
@@ -58,18 +58,18 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # 先配置静态文件（优先级更高）
-    _configure_static_files(app)
-
-    # 注册路由
+    # 先注册路由（避免被静态文件覆盖）
     _register_routes(app)
+
+    # 后配置静态文件（支持 SPA 路由）
+    _configure_static_files(app)
 
     return app
 
 
 def _register_routes(app: FastAPI):
     """注册所有路由"""
-    from app.api import convert, setup, tasks, websocket
+    from .api import convert, setup, tasks, websocket
 
     app.include_router(convert.router, prefix="/api", tags=["转换"])
     app.include_router(setup.router, prefix="/api", tags=["设置"])
