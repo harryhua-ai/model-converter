@@ -3,7 +3,7 @@ import docker
 import json
 import logging
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -85,17 +85,19 @@ class DockerToolChainAdapter:
         self,
         task_id: str,
         model_path: str,
-        config: dict
+        config: Dict[str, Any],
+        yaml_path: Optional[str] = None
     ) -> str:
-        """在 Docker 容器中执行转换
+        """使用 Docker 容器将量化 TFLite 模型转换为 NE301 .bin
 
         Args:
             task_id: 任务 ID
-            model_path: 模型文件路径（本地）
+            model_path: 量化后的 TFLite 模型路径
             config: 转换配置
+            yaml_path: YAML 类别定义文件（可选）
 
         Returns:
-            输出文件路径（本地）
+            NE301 .bin 文件路径
 
         Raises:
             RuntimeError: Docker client not available
@@ -105,14 +107,24 @@ class DockerToolChainAdapter:
         if not self.client:
             raise RuntimeError("Docker client not available")
 
-        # Validate model file exists
+        logger.info(f"步骤 3: 使用 Docker 转换 {model_path} 为 NE301 .bin")
+
+        # 验证模型文件存在
         model_path_obj = Path(model_path)
         if not model_path_obj.exists():
-            raise FileNotFoundError(f"Model file not found: {model_path}")
+            raise FileNotFoundError(f"模型文件不存在: {model_path}")
 
-        # Ensure output directory exists
+        # 准备输出路径
         output_dir = Path("outputs")
-        output_dir.mkdir(exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_filename = f"ne301_model_{task_id}.bin"
+        output_path = output_dir / output_filename
+
+        # 准备 NE301 JSON 配置
+        ne301_config = self._prepare_ne301_config(task_id, config, yaml_path)
+        config_path = output_dir / f"{task_id}_config.json"
+        with open(config_path, "w") as f:
+            json.dump(ne301_config, f, indent=2)
 
         # 准备卷映射
         model_dir = model_path_obj.parent.resolve()
@@ -130,26 +142,76 @@ class DockerToolChainAdapter:
             "/workspace/ne301/Script/model_packager.py",
             "create",
             "--model", f"/input/{model_filename}",
-            "--config", json.dumps(config),
-            "--output", f"/output/ne301_model_{task_id}.bin"
+            "--config", json.dumps(ne301_config),
+            "--output", f"/output/{output_filename}"
         ]
 
         try:
-            logger.info(f"Starting conversion for task {task_id}")
+            logger.info(f"启动 Docker 容器执行转换...")
 
             # 运行容器（同步等待）
-            # 容器会在完成后自动删除（remove=True）
-            self.client.containers.run(
+            result = self.client.containers.run(
                 self.image_name,
                 command=command,
                 volumes=volumes,
                 remove=True,
-                detach=False
+                detach=False,
+                mem_limit="2g",
+                cpu_count=1
             )
 
-            logger.info(f"Conversion completed for task {task_id}")
-            return f"outputs/ne301_model_{task_id}.bin"
+            logger.info(f"Docker 容器输出: {result.decode('utf-8')}")
+
+            # 验证输出文件
+            if not output_path.exists():
+                raise FileNotFoundError(f"NE301 .bin 文件未生成: {output_path}")
+
+            logger.info(f"✅ 转换成功: {output_path}")
+            return str(output_path)
 
         except Exception as e:
-            logger.error(f"Conversion failed for task {task_id}: {e}")
+            logger.error(f"转换失败 for task {task_id}: {e}")
             raise
+
+    def _prepare_ne301_config(
+        self,
+        task_id: str,
+        config: Dict[str, Any],
+        yaml_path: Optional[str]
+    ) -> Dict[str, Any]:
+        """准备 NE301 JSON 配置
+
+        Args:
+            task_id: 任务 ID
+            config: 转换配置
+            yaml_path: YAML 类别定义文件路径（可选）
+
+        Returns:
+            NE301 JSON 配置字典
+        """
+        ne301_config = {
+            "model_name": f"ne301_model_{task_id}",
+            "input_size": config["input_size"],
+            "num_classes": config["num_classes"],
+            "confidence_threshold": config.get("confidence_threshold", 0.25),
+            "model_type": config["model_type"],
+            "quantization": config.get("quantization", "int8")
+        }
+
+        # 如果有 YAML 文件，添加类别信息
+        if yaml_path and Path(yaml_path).exists():
+            try:
+                import yaml
+                with open(yaml_path) as f:
+                    yaml_data = yaml.safe_load(f)
+                    # 尝试读取类别名称
+                    for key in ["names", "classes", "labels", "categories"]:
+                        if key in yaml_data:
+                            ne301_config["class_names"] = yaml_data[key]
+                            break
+            except ImportError:
+                logger.warning("PyYAML 未安装，跳过 YAML 文件解析")
+            except Exception as e:
+                logger.warning(f"解析 YAML 文件失败: {e}")
+
+        return ne301_config
