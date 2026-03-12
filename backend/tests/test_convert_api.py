@@ -44,8 +44,15 @@ classes:
 """
 
 
+@pytest.mark.integration
 def test_convert_model_success(client, sample_config):
     """测试成功创建转换任务"""
+    try:
+        import ultralytics
+        import tensorflow
+    except ImportError:
+        pytest.skip("需要 ML 库（ultralytics, tensorflow）")
+
     # 准备测试文件
     model_file = io.BytesIO(b"fake model content")
     model_file.name = "model.pt"
@@ -69,7 +76,13 @@ def test_convert_model_success(client, sample_config):
     assert data["status"] == "pending"
 
 
+@pytest.mark.integration
 def test_convert_model_with_yaml(client, sample_config, sample_yaml):
+    try:
+        import ultralytics
+        import tensorflow
+    except ImportError:
+        pytest.skip("需要 ML 库（ultralytics, tensorflow）")
     """测试带 YAML 文件的转换"""
     model_file = io.BytesIO(b"fake model content")
     model_file.name = "model.pt"
