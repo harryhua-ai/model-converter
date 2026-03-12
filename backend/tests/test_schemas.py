@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from app.models.schemas import (
     ConversionConfig,
+    ClassItem,
     ClassDefinition,
     ConversionTask,
     EnvironmentStatus,
@@ -114,13 +115,13 @@ class TestClassDefinition:
         """测试基本的类别定义创建"""
         class_def = ClassDefinition(
             classes=[
-                {"name": "person", "id": 0, "color": [255, 0, 0]},
-                {"name": "car", "id": 1, "color": [0, 255, 0]},
+                ClassItem(name="person", id=0, color=(255, 0, 0)),
+                ClassItem(name="car", id=1, color=(0, 255, 0)),
             ]
         )
         assert len(class_def.classes) == 2
-        assert class_def.classes[0]["name"] == "person"
-        assert class_def.classes[1]["id"] == 1
+        assert class_def.classes[0].name == "person"
+        assert class_def.classes[1].id == 1
 
     def test_empty_classes_list(self):
         """测试空的类别列表"""
@@ -129,9 +130,9 @@ class TestClassDefinition:
 
     def test_single_class(self):
         """测试单个类别"""
-        class_def = ClassDefinition(classes=[{"name": "person", "id": 0}])
+        class_def = ClassDefinition(classes=[ClassItem(name="person", id=0)])
         assert len(class_def.classes) == 1
-        assert class_def.classes[0]["name"] == "person"
+        assert class_def.classes[0].name == "person"
 
 
 @pytest.mark.unit

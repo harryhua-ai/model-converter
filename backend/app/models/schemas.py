@@ -23,9 +23,19 @@ class ConversionConfig(BaseModel):
     use_calibration: bool = False
 
 
+class ClassItem(BaseModel):
+    """单个类别定义"""
+    name: str = Field(..., min_length=1, description="类别名称")
+    id: int = Field(..., ge=0, description="类别 ID")
+    color: tuple[int, int, int] | None = Field(
+        default=None,
+        description="RGB 颜色值 (0-255)"
+    )
+
+
 class ClassDefinition(BaseModel):
     """类别定义"""
-    classes: list[dict]  # [{"name": "person", "id": 0, "color": [255, 0, 0]}]
+    classes: list[ClassItem] = Field(default_factory=list, description="类别列表")
 
 
 class ConversionTask(BaseModel):
