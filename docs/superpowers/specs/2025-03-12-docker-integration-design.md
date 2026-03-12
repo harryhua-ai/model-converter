@@ -120,11 +120,24 @@ def convert_model(
     task_id,
     model_path,
     config,
-    log_callback: Optional[Callable[[str], None]] = None
+    log_callback: Optional[Callable[[str], None]] = None,
+    calibration_path: Optional[str] = None,
+    yaml_path: Optional[str] = None
 ) -> str:
-    """支持日志流式传输"""
+    """支持日志流式传输和可选参数"""
     # 运行容器时使用 logs=True
     # 实时捕获并传递日志
+
+    # 添加资源限制
+    self.client.containers.run(
+        self.image_name,
+        command=command,
+        volumes=volumes,
+        remove=True,
+        detach=False,
+        mem_limit="2g",      # 限制内存使用
+        cpu_count=1          # 限制 CPU 核心
+    )
 ```
 
 **日志解析**:
@@ -212,12 +225,36 @@ volumes = {
     "/path/to/upload": {"bind": "/input", "mode": "ro"},
     "/path/to/outputs": {"bind": "/output", "mode": "rw"}
 }
+
+# 如果有校准数据集，添加额外卷
+if calibration_path:
+    calibration_dir = os.path.dirname(calibration_path)
+    volumes[str(calibration_dir)] = {"bind": "/input", "mode": "ro"}
 ```
 
 **输出文件**:
 - 路径: `outputs/ne301_model_{task_id}.bin`
 - 下载端点: `GET /api/download/{task_id}`
 - 文件名: `ne301_model_{timestamp}_{task_id}.bin`
+
+**可选参数传递**:
+```python
+command = [
+    "python", "/workspace/ne301/Script/model_packager.py",
+    "create",
+    "--model", f"/input/{model_filename}",
+    "--config", json.dumps(config),
+    "--output", f"/output/ne301_model_{task_id}.bin"
+]
+
+# 添加校准数据集（如果提供）
+if calibration_path:
+    command.extend(["--calibration", "/input/calibration.zip"])
+
+# 添加 YAML 文件（如果提供）
+if yaml_path:
+    command.extend(["--classes", "/input/classes.yaml"])
+```
 
 ---
 
@@ -279,6 +316,7 @@ volumes = {
 - 仅支持 Docker 模式（不支持本地工具链）
 - 单任务并发（避免资源冲突）
 - 需要网络连接（首次拉取镜像）
+- **并发控制**: 使用任务队列或锁机制确保同时只有一个转换任务执行
 
 ---
 
