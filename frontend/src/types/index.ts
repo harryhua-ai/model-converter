@@ -1,3 +1,13 @@
+export interface ClassItem {
+  name: string;
+  id: number;
+  color?: [number, number, number] | null;
+}
+
+export interface ClassDefinition {
+  classes: ClassItem[];
+}
+
 export interface ConversionConfig {
   model_type: 'YOLOv8' | 'YOLOX';
   input_size: 256 | 480 | 640;
