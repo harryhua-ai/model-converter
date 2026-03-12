@@ -35,6 +35,7 @@ interface AppState {
   // 文件选择
   selectedFile: File | null;
   selectedYaml: File | null;
+  selectedCalibration: File | null;
 
   // 配置
   selectedPreset: string;
@@ -55,6 +56,7 @@ interface AppState {
   // Actions
   setSelectedFile: (file: File | null) => void;
   setSelectedYaml: (file: File | null) => void;
+  setSelectedCalibration: (file: File | null) => void;
   setSelectedPreset: (preset: string) => void;
   setNumClasses: (numClasses: number) => void;
   setModelType: (modelType: 'YOLOv8' | 'YOLOX') => void;
@@ -77,6 +79,7 @@ interface AppState {
 const initialState = {
   selectedFile: null,
   selectedYaml: null,
+  selectedCalibration: null,
   selectedPreset: 'balanced',
   numClasses: 80,
   modelType: 'YOLOv8' as const,
@@ -98,6 +101,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSelectedFile: (file) => set({ selectedFile: file }),
 
   setSelectedYaml: (file) => set({ selectedYaml: file }),
+
+  setSelectedCalibration: (file) => set({ selectedCalibration: file }),
 
   setSelectedPreset: (preset) => {
     const presetConfig = PRESETS[preset];

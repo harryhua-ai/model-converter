@@ -2,6 +2,7 @@ import { useEffect } from 'preact/hooks';
 import { Play, Download, RefreshCw, FileText } from 'lucide-preact';
 import ModelUploadArea from '../components/upload/ModelUploadArea';
 import ClassYamlUploadArea from '../components/upload/ClassYamlUploadArea';
+import CalibrationUploadArea from '../components/upload/CalibrationUploadArea';
 import { PresetCard, Preset } from '../components/config/PresetCard';
 import { ProgressBar } from '../components/monitor/ProgressBar';
 import { LogTerminal } from '../components/monitor/LogTerminal';
@@ -39,6 +40,7 @@ export default function HomePage() {
   const {
     selectedFile,
     selectedYaml,
+    selectedCalibration,
     selectedPreset,
     numClasses,
     conversionStatus,
@@ -46,6 +48,7 @@ export default function HomePage() {
     showLogs,
     setSelectedFile,
     setSelectedYaml,
+    setSelectedCalibration,
     setSelectedPreset,
     setNumClasses,
     setConversionStatus,
@@ -98,7 +101,12 @@ export default function HomePage() {
     }
 
     const config = getConfig();
-    await startConversion(selectedFile, config, selectedYaml || undefined);
+    await startConversion(
+      selectedFile,
+      config,
+      selectedYaml || undefined,
+      selectedCalibration || undefined
+    );
   };
 
   // 处理下载
@@ -185,6 +193,31 @@ export default function HomePage() {
                 onFileSelect={setSelectedYaml}
                 selectedFile={selectedYaml || undefined}
               />
+            </section>
+
+            {/* Step 2.5: Upload Calibration Dataset (Optional) */}
+            <section className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-8 h-8 bg-orange-500 text-white rounded-full flex items-center justify-center font-bold">
+                  2.5
+                </div>
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                    上传校准数据集（可选）
+                  </h2>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    上传校准图片集可提高量化精度
+                  </p>
+                </div>
+              </div>
+              <CalibrationUploadArea
+                onFileSelect={setSelectedCalibration}
+              />
+              {selectedCalibration && (
+                <div className="mt-3 text-sm text-green-600 dark:text-green-400">
+                  ✓ 已选择: {selectedCalibration.name} ({(selectedCalibration.size / 1024 / 1024).toFixed(2)}MB)
+                </div>
+              )}
             </section>
 
             {/* Step 3: Select Preset */}

@@ -42,7 +42,8 @@ interface TaskStatusResponse {
 export async function uploadModel(
   modelFile: File,
   config: Record<string, unknown>,
-  yamlFile?: File
+  yamlFile?: File,
+  calibrationFile?: File
 ): Promise<ConversionResponse> {
   try {
     const formData = new FormData();
@@ -51,6 +52,10 @@ export async function uploadModel(
 
     if (yamlFile) {
       formData.append('yaml', yamlFile);
+    }
+
+    if (calibrationFile) {
+      formData.append('calibration_dataset', calibrationFile);
     }
 
     const response = await axios.post<ConversionResponse>(

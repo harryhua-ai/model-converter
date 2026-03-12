@@ -19,7 +19,8 @@ interface UseConversionReturn {
   startConversion: (
     modelFile: File,
     config: ConversionConfig,
-    yamlFile?: File
+    yamlFile?: File,
+    calibrationFile?: File
   ) => Promise<void>;
   cancelConversion: () => Promise<void>;
   downloadResult: () => Promise<void>;
@@ -54,7 +55,12 @@ export function useConversion(): UseConversionReturn {
   }, []);
 
   const startConversion = useCallback(
-    async (modelFile: File, config: ConversionConfig, yamlFile?: File) => {
+    async (
+      modelFile: File,
+      config: ConversionConfig,
+      yamlFile?: File,
+      calibrationFile?: File
+    ) => {
       try {
         // 重置状态
         updateState({
@@ -70,7 +76,12 @@ export function useConversion(): UseConversionReturn {
         addLog('开始转换任务...');
 
         // 上传模型并启动转换
-        const response = await modelApi.uploadModel(modelFile, config, yamlFile);
+        const response = await modelApi.uploadModel(
+          modelFile,
+          config,
+          yamlFile,
+          calibrationFile
+        );
         const taskId = response.task_id;
 
         addLog(`任务已创建: ${taskId}`);
