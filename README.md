@@ -11,27 +11,52 @@ PyTorch 模型转换为 NE301 设备可用 .bin 文件的工具。
 
 ## 快速开始
 
-### 1. 系统要求
-
-- Python 3.11+
-- Docker Desktop（已安装并运行）
-- Node.js 18+ (仅开发环境)
-
-### 2. 启动应用
+### 1. 环境准备
 
 ```bash
-# Linux/macOS
-./scripts/start.sh
+# 克隆仓库
+git clone <repository-url>
+cd model-converter
 
-# Windows
-scripts\start.bat
+# 创建虚拟环境（Python 3.11/3.12 推荐）
+python3 -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# 安装 Python 依赖
+pip install -r backend/requirements.txt
+
+# 安装 ML 转换依赖
+pip install ultralytics tensorflow hydra-core opencv-python
+
+# 启动 Docker Desktop
+# 确保 Docker 正在运行
+docker --version
 ```
 
-### 3. 打开浏览器
+### 2. 启动服务
 
-访问 http://localhost:8000
+```bash
+cd backend
+python -m uvicorn app.main:app --reload --port 8000
+```
 
-首次使用会引导您安装 Docker 并拉取工具镜像。
+### 3. 访问 Web 界面
+
+打开浏览器访问 http://localhost:8000
+
+## 模型转换
+
+支持将 YOLOv8 PyTorch 模型转换为 NE301 .bin 格式。
+
+**功能特性:**
+- ✅ 支持 .pt/.pth 格式
+- ✅ 三种转换预设（256/480/640）
+- ✅ 自动类别识别（YAML 文件）
+- ✅ 校准数据集支持（提高量化精度）
+- ✅ 实时进度显示
+- ✅ 完整错误处理
+
+详细文档请参阅 [MODEL_CONVERSION.md](backend/docs/MODEL_CONVERSION.md)。
 
 ## 使用指南
 
@@ -94,8 +119,12 @@ model-converter/
 │   ├── app/
 │   │   ├── main.py      # FastAPI 应用入口
 │   │   ├── api/         # API 路由
-│   │   ├── services/    # 业务逻辑
+│   │   ├── core/        # 核心逻辑
+│   │   │   ├── converter.py      # 模型转换器
+│   │   │   └── docker_adapter.py # Docker 适配器
 │   │   └── models/      # 数据模型
+│   ├── tools/           # ST 量化脚本
+│   ├── docs/            # 文档
 │   └── requirements.txt
 ├── frontend/            # 前端代码
 │   ├── src/
@@ -135,21 +164,34 @@ LOG_LEVEL=INFO
 **解决**:
 - 检查网络连接
 - 配置 Docker 镜像加速器
-- 手动拉取镜像: `docker pull your-registry/ne301-converter:latest`
+- 手动拉取镜像: `docker pull camthink/ne301-dev:latest`
 
 ### 转换相关问题
 
 **问题**: 转换失败
 **解决**:
-1. 检查上传的模型格式是否正确
+1. 检查上传的模型格式是否正确（.pt/.pth）
 2. 查看实时日志了解详细错误信息
 3. 确认模型输入尺寸符合要求
+
+**问题**: ML 库导入错误（No module named 'ultralytics' 或 'tensorflow'）
+**解决**:
+1. 确认使用 Python 3.11/3.12 环境（不支持 3.14）
+2. 安装 ML 依赖: `pip install ultralytics tensorflow hydra-core opencv-python`
+3. 重新启动服务
+
+**问题**: 量化失败
+**解决**:
+- 检查校准数据集格式（必须是包含 .jpg/.png 的 ZIP 文件）
+- 确保校准数据至少包含 32 张图片
 
 **问题**: 转换速度慢
 **解决**:
 - 选择"快速"预设配置
-- 减小模型输入尺寸
+- 减小模型输入尺寸（256x256）
 - 检查系统资源使用情况
+
+详细故障排查请参阅 [MODEL_CONVERSION.md](backend/docs/MODEL_CONVERSION.md)。
 
 ## 许可证
 
