@@ -3,8 +3,9 @@
 """
 import uuid
 import logging
+import threading
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Any
 
 from app.models.schemas import ConversionTask, ConversionConfig
 
@@ -15,15 +16,19 @@ class TaskManager:
     """任务管理器（单例）"""
 
     _instance: Optional['TaskManager'] = None
+    _lock = threading.Lock()
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
+            with cls._lock:
+                # 双重检查锁定模式
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
         return cls._instance
 
     def __init__(self):
         self.tasks: Dict[str, ConversionTask] = {}
-        self.websocket_connections: Dict[str, list] = {}
+        self.websocket_connections: Dict[str, List[Any]] = {}
 
     def create_task(self, config: ConversionConfig) -> str:
         """创建新任务"""
