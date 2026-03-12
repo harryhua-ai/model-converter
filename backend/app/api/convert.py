@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 ALLOWED_MODEL_EXTENSIONS = {".pt", ".pth", ".onnx"}
 ALLOWED_CONFIG_EXTENSIONS = {".json"}
 ALLOWED_YAML_EXTENSIONS = {".yaml", ".yml"}
+ALLOWED_CALIBRATION_EXTENSIONS = {".zip"}
 
 
 def _validate_file_extension(filename: str, allowed_extensions: set[str]) -> bool:
@@ -36,7 +37,8 @@ async def convert_model(
     background_tasks: BackgroundTasks,
     model_file: UploadFile = File(...),
     config_file: UploadFile = File(...),
-    yaml_file: Optional[UploadFile] = File(None)
+    yaml_file: Optional[UploadFile] = File(None),
+    calibration_dataset: Optional[UploadFile] = File(None)
 ):
     """
     启动模型转换任务
@@ -45,6 +47,7 @@ async def convert_model(
         model_file: PyTorch 模型文件 (.pt, .pth, .onnx)
         config_file: 转换配置 JSON 文件
         yaml_file: (可选) 类别定义 YAML 文件
+        calibration_dataset: (可选) 校准数据集 ZIP 文件 (32-100 张图片)
 
     Returns:
         JSONResponse: 包含 task_id 的响应
@@ -69,6 +72,28 @@ async def convert_model(
             status_code=400,
             detail=f"YAML 文件格式无效。允许的格式: {', '.join(ALLOWED_YAML_EXTENSIONS)}"
         )
+
+    # 3.5 验证校准数据集文件(如果提供)
+    if calibration_dataset and not _validate_file_extension(
+        calibration_dataset.filename, ALLOWED_CALIBRATION_EXTENSIONS
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"校准数据集必须是 ZIP 格式"
+        )
+
+    # 3.6 验证校准数据集文件大小 (最大 1GB)
+    if calibration_dataset:
+        MAX_CALIBRATION_SIZE = 1024 * 1024 * 1024  # 1GB
+        calibration_dataset.file.seek(0, os.SEEK_END)
+        file_size = calibration_dataset.file.tell()
+        calibration_dataset.file.seek(0)
+
+        if file_size > MAX_CALIBRATION_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"校准数据集文件过大。最大支持 {MAX_CALIBRATION_SIZE / 1024 / 1024}MB"
+            )
 
     try:
         # 4. 读取并验证配置文件
@@ -99,6 +124,42 @@ async def convert_model(
             with open(yaml_path, "wb") as f:
                 f.write(yaml_content)
 
+        # 6.5 保存校准数据集文件(如果提供)
+        calibration_path = None
+        if calibration_dataset:
+            import zipfile
+            import io
+
+            # 读取 ZIP 文件内容
+            zip_content = await calibration_dataset.read()
+
+            # 验证是否是有效的 ZIP 文件
+            try:
+                with zipfile.ZipFile(io.BytesIO(zip_content), 'r') as zip_ref:
+                    # 检查 ZIP 文件中是否有图片文件
+                    file_list = zip_ref.namelist()
+                    image_count = len([f for f in file_list if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
+
+                    if image_count == 0:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="校准数据集 ZIP 文件中未找到图片文件。支持的格式: .jpg, .jpeg, .png"
+                        )
+
+                    logger.info(f"校准数据集包含 {image_count} 张图片，共 {len(file_list)} 个文件")
+
+            except zipfile.BadZipFile:
+                raise HTTPException(
+                    status_code=400,
+                    detail="校准数据集不是有效的 ZIP 文件"
+                )
+
+            calibration_path = os.path.join(temp_dir, calibration_dataset.filename)
+            with open(calibration_path, "wb") as f:
+                f.write(zip_content)
+
+            logger.info(f"校准数据集已保存: {calibration_dataset.filename}")
+
         # 7. 创建任务
         task_manager = get_task_manager()
         task_id = task_manager.create_task(config)
@@ -106,6 +167,8 @@ async def convert_model(
         logger.info(f"创建转换任务: {task_id}")
         logger.info(f"模型文件: {model_file.filename}")
         logger.info(f"配置: {config.model_type}, {config.input_size}x{config.input_size}")
+        if calibration_path:
+            logger.info(f"校准数据集: {calibration_dataset.filename}")
 
         # 8. 启动后台转换任务
         background_tasks.add_task(
@@ -113,7 +176,8 @@ async def convert_model(
             task_id,
             model_path,
             config,
-            yaml_path
+            yaml_path,
+            calibration_path
         )
 
         return JSONResponse(
@@ -143,12 +207,20 @@ async def _run_conversion(
     task_id: str,
     model_path: str,
     config: ConversionConfig,
-    yaml_path: Optional[str] = None
+    yaml_path: Optional[str] = None,
+    calibration_path: Optional[str] = None
 ):
     """
     后台执行模型转换任务
 
     现在使用真实的转换流程
+
+    Args:
+        task_id: 任务 ID
+        model_path: 模型文件路径
+        config: 转换配置
+        yaml_path: YAML 文件路径（可选）
+        calibration_path: 校准数据集路径（可选）
     """
     from app.core.converter import ModelConverter
 
@@ -173,7 +245,7 @@ async def _run_conversion(
         output_path = converter.convert(
             model_path=model_path,
             config=config_dict,
-            calib_dataset_path=None,  # 暂不支持
+            calib_dataset_path=calibration_path,
             progress_callback=progress_callback
         )
 
