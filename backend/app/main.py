@@ -74,7 +74,7 @@ def _register_routes(app: FastAPI):
     app.include_router(convert.router, prefix="/api", tags=["转换"])
     app.include_router(setup.router, prefix="/api", tags=["设置"])
     app.include_router(tasks.router, prefix="/api", tags=["任务"])
-    app.include_router(websocket.router, tags=["WebSocket"])
+    app.include_router(websocket.router, prefix="/api", tags=["WebSocket"])
 
     # 健康检查端点
     @app.get("/health")

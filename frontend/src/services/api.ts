@@ -47,11 +47,11 @@ export async function uploadModel(
 ): Promise<ConversionResponse> {
   try {
     const formData = new FormData();
-    formData.append('model', modelFile);
+    formData.append('model_file', modelFile);
     formData.append('config', JSON.stringify(config));
 
     if (yamlFile) {
-      formData.append('yaml', yamlFile);
+      formData.append('yaml_file', yamlFile);
     }
 
     if (calibrationFile) {
@@ -71,7 +71,22 @@ export async function uploadModel(
     return response.data;
   } catch (error) {
     const apiError = error as AxiosError<ApiError>;
-    const message = apiError.response?.data?.detail || apiError.message || '上传失败';
+
+    // 格式化错误消息（处理数组和对象）
+    const formatErrorMessage = (detail: any): string => {
+      if (typeof detail === 'string') return detail;
+      if (Array.isArray(detail)) {
+        return detail.map((e: any) => e.msg || JSON.stringify(e)).join('; ');
+      }
+      if (typeof detail === 'object' && detail !== null) {
+        return JSON.stringify(detail);
+      }
+      return '未知错误';
+    };
+
+    const message = formatErrorMessage(apiError.response?.data?.detail) ||
+                    apiError.message ||
+                    '上传失败';
     throw new Error(message);
   }
 }

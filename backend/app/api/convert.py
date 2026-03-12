@@ -59,7 +59,7 @@ async def convert_model(
             detail=f"不支持的模型文件格式。允许的格式: {', '.join(ALLOWED_MODEL_EXTENSIONS)}"
         )
 
-    # 2. 解析并验证配置 JSON 字符串
+    # 2. 解析并验证配置 JSON
     try:
         config_dict = json.loads(config)
     except json.JSONDecodeError:
@@ -98,8 +98,15 @@ async def convert_model(
             )
 
     try:
+<<<<<<< Updated upstream
         # 4. Pydantic 验证配置
         validated_config = ConversionConfig(**config_dict)
+=======
+        # 4. 配置已在上面的步骤 2 中解析
+        
+        # Pydantic 验证 - 会抛出 ValidationError
+        config = ConversionConfig(**config_dict)
+>>>>>>> Stashed changes
 
         # 5. 读取 YAML 文件(如果提供)
         class_def = None
