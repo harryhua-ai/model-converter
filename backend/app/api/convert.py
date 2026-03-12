@@ -146,28 +146,42 @@ async def _run_conversion(
     yaml_path: Optional[str] = None
 ):
     """
-    后台执行转换任务
+    后台执行模型转换任务
 
-    TODO: 在后续任务中实现实际的 Docker 容器调用
+    现在使用真实的转换流程
     """
+    from app.core.converter import ModelConverter
+
     task_manager = get_task_manager()
 
     try:
-        # 更新任务状态为运行中
-        task_manager.update_progress(task_id, 0, "准备转换环境")
+        logger.info(f"开始任务 {task_id} 的真实转换流程")
 
-        # 模拟转换过程(后续替换为实际的 Docker 调用)
-        import asyncio
-        for i in range(0, 101, 10):
-            await asyncio.sleep(0.1)
-            task_manager.update_progress(task_id, i, f"转换中... {i}%")
+        # 初始化转换器
+        converter = ModelConverter()
+
+        # 进度回调
+        def progress_callback(progress: int, message: str):
+            task_manager.update_progress(task_id, progress, message)
+            logger.info(f"[{progress}%] {message}")
+
+        # 准备配置字典（从 Pydantic 模型）
+        config_dict = config.dict()
+        config_dict["task_id"] = task_id
+
+        # 执行转换
+        output_path = converter.convert(
+            model_path=model_path,
+            config=config_dict,
+            calib_dataset_path=None,  # 暂不支持
+            progress_callback=progress_callback
+        )
 
         # 标记任务完成
-        output_filename = f"converted_{os.path.basename(model_path)}.onnx"
-        task_manager.complete_task(task_id, output_filename)
-
-        logger.info(f"任务 {task_id} 转换完成")
+        task_manager.complete_task(task_id, output_path)
+        logger.info(f"✅ 任务 {task_id} 转换成功")
 
     except Exception as e:
-        logger.error(f"任务 {task_id} 转换失败: {e}")
+        logger.error(f"❌ 任务 {task_id} 转换失败: {str(e)}")
         task_manager.fail_task(task_id, str(e))
+        raise
