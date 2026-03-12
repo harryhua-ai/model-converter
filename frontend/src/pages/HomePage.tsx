@@ -88,6 +88,12 @@ export default function HomePage() {
     addLog('请上传模型文件开始转换');
   }, []);
 
+  // 处理类别检测（从 YAML 文件）
+  const handleClassDetected = (numClasses: number, names: string[]) => {
+    setNumClasses(numClasses);
+    addLog(`从 YAML 文件识别到 ${numClasses} 个类别`);
+  };
+
   // 处理开始转换
   const handleStartConversion = async () => {
     if (!selectedFile) {
@@ -192,6 +198,7 @@ export default function HomePage() {
               <ClassYamlUploadArea
                 onFileSelect={setSelectedYaml}
                 selectedFile={selectedYaml || undefined}
+                onClassDetected={handleClassDetected}
               />
             </section>
 

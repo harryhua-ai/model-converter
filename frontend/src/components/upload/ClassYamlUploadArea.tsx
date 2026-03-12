@@ -1,18 +1,28 @@
 import { useState } from 'preact/hooks';
-import { FileText, Upload } from 'lucide-preact';
+import { FileText, Upload, CheckCircle } from 'lucide-preact';
+import * as yaml from 'js-yaml';
 
 interface ClassYamlUploadAreaProps {
   onFileSelect: (file: File | null) => void;
   selectedFile?: File;
+  onClassDetected?: (numClasses: number, names: string[]) => void;
+}
+
+interface YamlData {
+  nc?: number;
+  names?: string[];
+  classes?: Array<{ name: string; id?: number }>;
 }
 
 export default function ClassYamlUploadArea({
   onFileSelect,
   selectedFile,
+  onClassDetected,
 }: ClassYamlUploadAreaProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string>('');
   const [preview, setPreview] = useState<string>('');
+  const [parsedClasses, setParsedClasses] = useState<{ numClasses: number; names: string[] } | null>(null);
 
   const validateFile = (file: File): boolean => {
     // 检查文件格式
@@ -32,6 +42,34 @@ export default function ClassYamlUploadArea({
       const content = e.target?.result as string;
       // 只预览前 500 个字符
       setPreview(content.substring(0, 500) + (content.length > 500 ? '...' : ''));
+
+      // 解析 YAML 内容
+      try {
+        const data = yaml.load(content) as YamlData;
+
+        let numClasses = 0;
+        let names: string[] = [];
+
+        // YOLO 格式: names 数组 + nc 字段
+        if (data.names && Array.isArray(data.names)) {
+          names = data.names;
+          numClasses = data.nc || names.length;
+        }
+        // 替代格式: classes 数组
+        else if (data.classes && Array.isArray(data.classes)) {
+          names = data.classes.map((c) => c.name);
+          numClasses = names.length;
+        }
+
+        if (numClasses > 0 && names.length > 0) {
+          setParsedClasses({ numClasses, names });
+          // 通知父组件
+          onClassDetected?.(numClasses, names);
+        }
+      } catch (err) {
+        console.warn('YAML 解析失败:', err);
+        // 不阻塞文件选择，只是无法自动提取类别信息
+      }
     };
     reader.readAsText(file);
   };
@@ -81,6 +119,7 @@ export default function ClassYamlUploadArea({
     onFileSelect(null);
     setPreview('');
     setError('');
+    setParsedClasses(null);
   };
 
   return (
@@ -146,6 +185,33 @@ export default function ClassYamlUploadArea({
               <pre className="bg-gray-50 p-3 rounded text-xs text-gray-700 overflow-x-auto border border-gray-200">
                 {preview}
               </pre>
+            </div>
+          )}
+
+          {parsedClasses && (
+            <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-md">
+              <div className="flex items-start">
+                <CheckCircle className="h-5 w-5 text-green-600 mr-2 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-green-800 mb-1">
+                    已识别 {parsedClasses.numClasses} 个类别
+                  </p>
+                  <p className="text-xs text-green-700 mb-2">
+                    类别列表: {parsedClasses.names.slice(0, 5).join(', ')}
+                    {parsedClasses.names.length > 5 && ' ...'}
+                  </p>
+                  <details className="text-xs text-green-700">
+                    <summary className="cursor-pointer hover:text-green-900">查看完整列表</summary>
+                    <div className="mt-2 pl-4 border-l-2 border-green-300">
+                      {parsedClasses.names.map((name, idx) => (
+                        <div key={idx}>
+                          {idx + 1}. {name}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                </div>
+              </div>
             </div>
           )}
         </div>
