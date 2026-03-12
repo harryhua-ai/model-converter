@@ -1,5 +1,6 @@
 # backend/tests/test_docker_adapter.py
 import pytest
+from unittest.mock import Mock, patch
 from app.core.docker_adapter import DockerToolChainAdapter
 
 @pytest.mark.unit
@@ -31,3 +32,35 @@ def test_pull_image_no_callback():
     # or mock it in actual CI/CD
     # For now, just verify the method exists
     assert hasattr(adapter, 'pull_image')
+
+@pytest.mark.unit
+def test_convert_model():
+    """测试模型转换（使用 mock）"""
+    from pathlib import Path
+    from unittest.mock import patch
+
+    adapter = DockerToolChainAdapter()
+    adapter.client = Mock()
+
+    # Mock container run
+    adapter.client.containers.run.return_value = None
+
+    # Mock file existence check
+    with patch.object(Path, 'exists', return_value=True):
+        result = adapter.convert_model(
+            task_id="test-123",
+            model_path="/tmp/test.onnx",
+            config={"format": "ne301"}
+        )
+
+    assert result == "outputs/ne301_model_test-123.bin"
+    adapter.client.containers.run.assert_called_once()
+
+@pytest.mark.unit
+def test_convert_model_no_docker():
+    """测试无 Docker 时的错误处理"""
+    adapter = DockerToolChainAdapter()
+    adapter.client = None
+
+    with pytest.raises(RuntimeError, match="Docker client not available"):
+        adapter.convert_model("test", "/tmp/test.onnx", {})

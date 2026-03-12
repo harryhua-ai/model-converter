@@ -1,6 +1,5 @@
 # backend/app/core/docker_adapter.py
 import docker
-import os
 import json
 import logging
 from pathlib import Path
@@ -97,17 +96,31 @@ class DockerToolChainAdapter:
 
         Returns:
             输出文件路径（本地）
+
+        Raises:
+            RuntimeError: Docker client not available
+            FileNotFoundError: 模型文件不存在
+            ValueError: 配置无效
         """
         if not self.client:
             raise RuntimeError("Docker client not available")
 
+        # Validate model file exists
+        model_path_obj = Path(model_path)
+        if not model_path_obj.exists():
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+
+        # Ensure output directory exists
+        output_dir = Path("outputs")
+        output_dir.mkdir(exist_ok=True)
+
         # 准备卷映射
-        model_dir = Path(model_path).parent.resolve()
-        output_dir = Path("outputs").absolute()
+        model_dir = model_path_obj.parent.resolve()
+        output_dir_abs = output_dir.absolute()
 
         volumes = {
             str(model_dir): {"bind": "/input", "mode": "ro"},
-            str(output_dir): {"bind": "/output", "mode": "rw"}
+            str(output_dir_abs): {"bind": "/output", "mode": "rw"}
         }
 
         # 构建命令
