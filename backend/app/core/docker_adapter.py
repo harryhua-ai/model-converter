@@ -224,7 +224,8 @@ class DockerToolChainAdapter:
 
             bin_path = self._build_ne301_model(
                 task_id,
-                ne301_project
+                ne301_project,
+                quantized_tflite  # ✅ 传递量化文件路径作为备选
             )
 
             if progress_callback:
@@ -238,48 +239,21 @@ class DockerToolChainAdapter:
             raise
 
     def _export_tflite(self, model_path: str, input_size: int) -> str:
-        """步骤 1: PyTorch → TFLite"""
+        """步骤 1: PyTorch → SavedModel（用于后续量化）"""
         from ultralytics import YOLO
 
-        logger.info(f"步骤 1: 导出 {model_path} 为 TFLite 格式")
+        logger.info(f"步骤 1: 导出 {model_path} 为 SavedModel 格式（用于量化）")
 
         model = YOLO(model_path)
-        export_result = model.export(format="tflite", imgsz=input_size, int8=False)
+        # ✅ 修复：导出为 SavedModel 格式（量化脚本需要 SavedModel，不是 TFLite）
+        saved_model_path = model.export(format="saved_model", imgsz=input_size, int8=False)
 
-        # 从导出结果中获取文件路径
-        # YOLO export 返回一个 ExportResults 对象
-        if hasattr(export_result, 'saved_model') and export_result.saved_model:
-            # 导出为 SavedModel 格式
-            saved_model_path = Path(export_result.saved_model)
-            tflite_files = list(saved_model_path.glob("*.tflite"))
-            if tflite_files:
-                logger.info(f"✅ TFLite 导出成功: {tflite_files[0]}")
-                return str(tflite_files[0])
-
-        # 备用：在临时目录中查找
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            # 搜索可能的 TFLite 文件
-            search_paths = [
-                Path(tmp_dir),
-                Path("/tmp"),
-                Path(".").parent
-            ]
-
-            for search_path in search_paths:
-                tflite_files = list(search_path.rglob("*_float32.tflite"))
-                if not tflite_files:
-                    tflite_files = list(search_path.rglob("*.tflite"))
-
-                if tflite_files:
-                    logger.info(f"✅ TFLite 导出成功: {tflite_files[0]}")
-                    # 复制到当前工作目录以便后续使用
-                    import shutil
-                    local_copy = Path(".").name / tflite_files[0].name
-                    shutil.copy2(tflite_files[0], local_copy)
-                    return str(local_copy)
-
-        raise FileNotFoundError("TFLite 导出失败：未找到生成的 TFLite 文件")
+        # ✅ model.export() 返回字符串路径
+        if isinstance(saved_model_path, str) and Path(saved_model_path).exists():
+            logger.info(f"✅ SavedModel 导出成功: {saved_model_path}")
+            return saved_model_path
+        else:
+            raise FileNotFoundError(f"SavedModel 导出失败：文件未生成或路径无效 ({saved_model_path})")
 
     def _quantize_tflite(
         self,
@@ -296,7 +270,38 @@ class DockerToolChainAdapter:
 
         import tempfile
         import yaml
+        import zipfile
         from omegaconf import OmegaConf, DictConfig
+
+        # 处理校准数据集：如果是 ZIP 文件，需要解压
+        actual_calib_path = calib_dataset_path or ""
+        if calib_dataset_path and calib_dataset_path.endswith('.zip'):
+            logger.info(f"检测到校准数据集是 ZIP 文件，正在解压...")
+
+            # 创建临时目录
+            extract_dir = tempfile.mkdtemp(prefix="calibration_")
+
+            try:
+                with zipfile.ZipFile(calib_dataset_path, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
+
+                logger.info(f"✅ 校准数据集已解压到: {extract_dir}")
+
+                # 查找解压后的目录（可能包含子目录）
+                # 优先使用包含图片文件的直接目录
+                for root, dirs, files in os.walk(extract_dir):
+                    image_files = [f for f in files if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                    if image_files:
+                        actual_calib_path = root
+                        logger.info(f"✅ 找到校准图片目录: {actual_calib_path} (包含 {len(image_files)} 张图片)")
+                        break
+
+                if not actual_calib_path or actual_calib_path == calib_dataset_path:
+                    logger.error(f"解压后未找到有效的校准图片")
+                    actual_calib_path = extract_dir
+            except Exception as e:
+                logger.error(f"解压校准数据集失败: {e}")
+                raise RuntimeError(f"解压校准数据集失败: {e}")
 
         # 准备 Hydra 配置
         hydra_config = {
@@ -305,9 +310,9 @@ class DockerToolChainAdapter:
                 "input_shape": [input_size, input_size, 3]
             },
             "quantization": {
-                "calib_dataset_path": calib_dataset_path or "",
+                "calib_dataset_path": actual_calib_path,
                 "export_path": "/app/outputs",
-                "fake": calib_dataset_path is None  # 如果没有校准数据集，使用 fake quantization
+                "fake": not bool(actual_calib_path)  # 如果没有校准数据集，使用 fake quantization
             }
         }
 
@@ -317,8 +322,9 @@ class DockerToolChainAdapter:
             yaml.dump(hydra_config, f)
 
         # 执行量化脚本
+        # 修复：当前工作目录是 /app，Python 模块路径从 tools 开始
         cmd = [
-            "python", "-m", "app.tools.quantization.tflite_quant",
+            "python", "-m", "tools.quantization.tflite_quant",
             "--config-name", "user_config_quant",
             f"model.model_path={hydra_config['model']['model_path']}",
             f"model.input_shape=[{input_size},{input_size},3]",
@@ -328,11 +334,16 @@ class DockerToolChainAdapter:
 
         logger.info(f"执行量化命令: {' '.join(cmd)}")
 
+        # 设置环境变量以获取详细错误信息
+        env = os.environ.copy()
+        env["HYDRA_FULL_ERROR"] = "1"
+
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=600
+            timeout=600,
+            env=env
         )
 
         if result.returncode != 0:
@@ -389,24 +400,67 @@ class DockerToolChainAdapter:
     def _build_ne301_model(
         self,
         task_id: str,
-        ne301_project_path: Path
+        ne301_project_path: Path,
+        quantized_tflite: str
     ) -> str:
-        """步骤 4: 调用 NE301 容器打包（改进版）
+        """步骤 4: 调用 NE301 容器打包（改进版 - 架构感知）
 
         参考 AIToolStack 的 _build_with_docker() 实现
 
         Args:
             task_id: 任务 ID
             ne301_project_path: NE301 项目路径
+            quantized_tflite: 量化 TFLite 文件路径（备选输出）
+
+        Returns:
+            NE301 .bin 文件路径 或 量化 TFLite 文件路径
+
+        Raises:
+            RuntimeError: 如果打包失败且备选输出也不可用
+        """
+        logger.info(f"步骤 4: 调用 NE301 容器打包")
+
+        # 检测主机架构
+        import platform
+        host_arch = platform.machine()
+        is_arm64 = host_arch.lower() in ('arm64', 'aarch64')
+
+        if is_arm64:
+            logger.warning("⚠️  检测到 ARM64 架构（Apple Silicon）")
+            logger.warning("⚠️  NE301 容器为 amd64 架构，stedgeai 工具需要 AVX 指令集")
+            logger.warning("⚠️  将提供量化 TFLite 文件作为备选输出")
+            logger.info("💡 提示：NE301 .bin 打包需要在 x86_64 环境中执行")
+
+            # 直接返回量化 TFLite 文件
+            return self._provide_quantized_tflite_output(task_id, quantized_tflite)
+
+        # x86_64 环境：尝试 NE301 打包
+        try:
+            return self._attempt_ne301_build(task_id, ne301_project_path, quantized_tflite)
+        except RuntimeError as e:
+            logger.error(f"❌ NE301 打包失败: {e}")
+            logger.info("📦 提供量化 TFLite 作为备选输出...")
+            return self._provide_quantized_tflite_output(task_id, quantized_tflite)
+
+    def _attempt_ne301_build(
+        self,
+        task_id: str,
+        ne301_project_path: Path,
+        quantized_tflite: str
+    ) -> str:
+        """尝试 NE301 打包（仅在 x86_64 环境）
+
+        Args:
+            task_id: 任务 ID
+            ne301_project_path: NE301 项目路径
+            quantized_tflite: 量化 TFLite 文件路径
 
         Returns:
             NE301 .bin 文件路径
 
         Raises:
-            RuntimeError: 如果无法获取宿主机路径或打包失败
+            RuntimeError: 如果打包失败
         """
-        logger.info(f"步骤 4: 调用 NE301 容器打包")
-
         model_name = f"model_{task_id}"
 
         # ✅ 获取宿主机路径（关键改进）
@@ -480,5 +534,41 @@ class DockerToolChainAdapter:
         final_bin_path = output_dir / f"ne301_model_{task_id}.bin"
         shutil.copy2(bin_files[0], final_bin_path)
 
-        logger.info(f"✅ 转换成功: {final_bin_path}")
+        logger.info(f"✅ NE301 打包成功: {final_bin_path}")
         return str(final_bin_path)
+
+    def _provide_quantized_tflite_output(
+        self,
+        task_id: str,
+        quantized_tflite: str
+    ) -> str:
+        """提供量化 TFLite 文件作为备选输出
+
+        Args:
+            task_id: 任务 ID
+            quantized_tflite: 量化 TFLite 文件路径
+
+        Returns:
+            量化 TFLite 文件路径（在输出目录中）
+        """
+        logger.info("📦 准备量化 TFLite 输出...")
+
+        # 检查量化文件是否存在
+        tflite_path = Path(quantized_tflite)
+        if not tflite_path.exists():
+            raise FileNotFoundError(f"量化 TFLite 文件未找到: {quantized_tflite}")
+
+        # 复制到输出目录
+        output_dir = Path("/app/outputs")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        final_tflite_path = output_dir / f"quantized_model_{task_id}.tflite"
+        shutil.copy2(tflite_path, final_tflite_path)
+
+        logger.info(f"✅ 量化 TFLite 已生成: {final_tflite_path}")
+        logger.warning("⚠️  注意：此文件为量化 TFLite 格式，不是 NE301 .bin 格式")
+        logger.info("💡 提示：要在 x86_64 环境中完成 NE301 打包，请执行以下步骤：")
+        logger.info("   1. 将量化 TFLite 文件传输到 x86_64 服务器")
+        logger.info("   2. 在该服务器上运行 NE301 打包命令")
+        logger.info("   3. 或使用云服务完成打包（AWS/GCP/Azure x86_64 实例）")
+
+        return str(final_tflite_path)
