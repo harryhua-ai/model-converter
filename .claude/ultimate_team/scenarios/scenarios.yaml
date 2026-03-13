@@ -1,0 +1,65 @@
+new_feature:
+  triggers:
+    - 添加
+    - 实现
+    - 新建
+  priority: 1
+  strong_match: true
+
+bugfix:
+  triggers:
+    - 修复
+    - 解决
+    - 修正
+  priority: 2
+  strong_match: false
+
+security_review:
+  triggers:
+    - 安全
+    - 漏洞
+    - 加密
+    - 紧急
+  priority: 5
+  strong_match: true
+
+refactor:
+  triggers:
+    - 重构
+    - 优化
+    - 简化
+  priority: 3
+  strong_match: false
+
+testing:
+  triggers:
+    - 测试
+    - 验证
+    - 校验
+  priority: 4
+  strong_match: false
+
+documentation:
+  triggers:
+    - 文档
+    - 说明
+    - 注释
+  priority: 6
+  strong_match: false
+
+maintenance:
+  triggers:
+    - 查看
+    - 检查
+    - 状态
+  priority: 7
+  strong_match: false
+  default: true
+
+performance:
+  triggers:
+    - 性能
+    - 加速
+    - 缓存
+  priority: 8
+  strong_match: false
