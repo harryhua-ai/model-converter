@@ -449,6 +449,7 @@ class DockerToolChainAdapter:
         """步骤 4: 调用 NE301 容器打包（改进版 - 架构感知）
 
         参考 AIToolStack 的 _build_with_docker() 实现
+        支持在 ARM64 环境下通过 QEMU 模拟执行 NE301 打包
 
         Args:
             task_id: 任务 ID
@@ -463,21 +464,19 @@ class DockerToolChainAdapter:
         """
         logger.info(f"步骤 4: 调用 NE301 容器打包")
 
-        # 检测主机架构
+        # 检测主机架构（仅用于日志记录）
         import platform
         host_arch = platform.machine()
         is_arm64 = host_arch.lower() in ('arm64', 'aarch64')
 
         if is_arm64:
-            logger.warning("⚠️  检测到 ARM64 架构（Apple Silicon）")
-            logger.warning("⚠️  NE301 容器为 amd64 架构，stedgeai 工具需要 AVX 指令集")
-            logger.warning("⚠️  将提供量化 TFLite 文件作为备选输出")
-            logger.info("💡 提示：NE301 .bin 打包需要在 x86_64 环境中执行")
+            logger.info(f"ℹ️  检测到 ARM64 架构（Apple Silicon）")
+            logger.info(f"ℹ️  将使用 QEMU 模拟执行 NE301 打包")
+            logger.info(f"ℹ️  首次运行可能较慢，后续会缓存翻译结果")
+        else:
+            logger.info(f"ℹ️  检测到 x86_64 架构，将使用原生性能执行")
 
-            # 直接返回量化 TFLite 文件
-            return self._provide_quantized_tflite_output(task_id, quantized_tflite)
-
-        # x86_64 环境：尝试 NE301 打包
+        # 尝试 NE301 打包（无论架构如何）
         try:
             return self._attempt_ne301_build(task_id, ne301_project_path, quantized_tflite)
         except RuntimeError as e:
