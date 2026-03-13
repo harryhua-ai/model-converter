@@ -1,0 +1,106 @@
+.shortcut-helper {
+  position: absolute;
+  bottom: var(--spacing-xl);
+  left: var(--spacing-xl);
+  right: var(--spacing-xl);
+  z-index: var(--z-fixed);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  max-width: 600px;
+}
+
+.shortcut-helper-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-sm) var(--spacing-md);
+  cursor: pointer;
+  pointer-events: auto;
+  user-select: none;
+  transition: background-color var(--transition-base);
+}
+
+.shortcut-helper-header:hover {
+  background: var(--bg-secondary);
+}
+
+.shortcut-helper-title {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.shortcut-toggle-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: var(--spacing-xs);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--transition-base);
+  font-size: var(--font-size-lg);
+}
+
+.shortcut-toggle-btn:hover {
+  color: var(--text-primary);
+}
+
+.shortcut-helper-content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-md) var(--spacing-lg);
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-top: 1px solid var(--border-color);
+  pointer-events: auto;
+}
+
+.shortcut-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-shrink: 0;
+  white-space: nowrap;
+  line-height: var(--line-height-normal);
+}
+
+.shortcut-key {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  font-family: var(--font-family-mono);
+  white-space: nowrap;
+}
+
+.shortcut-description {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+/* 滚动条样式 */
+.shortcut-helper-content::-webkit-scrollbar {
+  height: 6px;
+}
+
+.shortcut-helper-content::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+  border-radius: 3px;
+}
+
+.shortcut-helper-content::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+
+.shortcut-helper-content::-webkit-scrollbar-thumb:hover {
+  background: var(--text-light);
+}

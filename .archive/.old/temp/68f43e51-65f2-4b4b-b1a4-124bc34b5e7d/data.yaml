@@ -1,0 +1,36 @@
+names:
+- Banana
+- Apple
+- Orange
+- Tomato
+- Carrot
+- Cucumber
+- Potato
+- Bread
+- Cake
+- Pizza
+- Hamburger
+- Chicken
+- Fish
+- Food
+- Tin can
+- Bottle
+- Facial tissue holder
+- Toilet paper
+- Paper towel
+- Milk
+- Snack
+- Plastic bag
+- Candy
+- Light bulb
+- Toothbrush
+- Soap dispenser
+- Drinking straw
+- Fast food
+- Pasta
+- Pastry
+nc: 30
+path: ./temp/68f43e51-65f2-4b4b-b1a4-124bc34b5e7d/calibration_dataset
+test: /kaggle/input/household-trash-recycling-dataset/images/val
+train: calibration
+val: calibration

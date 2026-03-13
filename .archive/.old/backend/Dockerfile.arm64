@@ -1,0 +1,37 @@
+# ARM64 原生优化 Dockerfile（简化版）
+# 基于官方 Python 3.11 ARM64 镜像
+
+FROM --platform=linux/arm64 python:3.11-slim
+
+# 安装系统依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 \
+    curl wget git \
+    && rm -rf /var/lib/apt/lists/*
+
+# 升级 pip
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# 安装 PyTorch（ARM64 优化版本）
+RUN python3 -m pip install --no-cache-dir \
+    torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# 复制并安装项目依赖
+COPY requirements.txt .
+RUN python3 -m pip install --no-cache-dir -r requirements.txt
+
+# 复制应用代码
+COPY . .
+
+# 创建必要的目录
+RUN mkdir -p uploads temp outputs
+
+# 设置工作目录
+WORKDIR /app
+
+# 暴露端口
+EXPOSE 8000
+
+# 启动命令
+CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

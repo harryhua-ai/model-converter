@@ -1,0 +1,35 @@
+{
+  "name": "ne301-model-converter-frontend",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@preact/signals": "^2.2.0",
+    "@radix-ui/react-dialog": "^1.1.4",
+    "@radix-ui/react-dropdown-menu": "^2.1.4",
+    "@radix-ui/react-toast": "^1.2.4",
+    "axios": "^1.11.0",
+    "clsx": "^2.1.1",
+    "lucide-preact": "^0.577.0",
+    "preact": "^10.26.9",
+    "preact-router": "^4.1.2",
+    "rosetta": "^1.1.0",
+    "tailwind-merge": "^2.6.0",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3"
+  },
+  "packageManager": "pnpm@10.29.2+sha512.bef43fa759d91fd2da4b319a5a0d13ef7a45bb985a3d7342058470f9d2051a3ba8674e629672654686ef9443ad13a82da2beb9eeb3e0221c87b8154fff9d74b8"
+}

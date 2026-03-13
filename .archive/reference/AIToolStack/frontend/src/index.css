@@ -1,0 +1,47 @@
+/**
+ * Main Stylesheet
+ * Imports unified style system and defines base styles
+ */
+
+/* Import unified style system */
+@import './styles/theme.css';
+@import './styles/components.css';
+@import './styles/utilities.css';
+
+/* ========== Reset & Base Styles ========== */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-normal);
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+code {
+  font-family: var(--font-family-mono);
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Base button styles - using unified component styles from components.css */
+button {
+  font-family: var(--font-family-base);
+  font-size: var(--btn-font-size);
+  line-height: var(--btn-line-height);
+  box-sizing: border-box;
+}

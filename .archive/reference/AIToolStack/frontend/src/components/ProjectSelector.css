@@ -1,0 +1,527 @@
+.project-selector {
+  width: 100%;
+  min-height: calc(100vh - var(--header-height));
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.project-selector-header {
+  display: none; /* 隐藏原header，因为现在有顶部导航栏 */
+}
+
+.project-selector-header h1 {
+  font-size: 2.5em;
+  margin-bottom: 10px;
+  color: var(--primary-color);
+}
+
+.project-selector-header p {
+  font-size: 1.1em;
+  color: var(--text-light);
+}
+
+.project-selector-content {
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  width: 100%;
+  background: var(--bg-primary);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-xl);
+  box-shadow: var(--shadow-md);
+  max-height: calc(100vh - var(--header-height, 60px) - var(--spacing-xl, 24px) * 2);
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* Hide scrollbar but keep scroll functionality */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.project-selector-content::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
+.project-list-section {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  text-align: initial;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-2xl);
+}
+
+.section-header h2 {
+  color: var(--primary-color);
+  margin: 0;
+  font-size: var(--font-size-3xl);
+}
+
+.header-actions {
+  display: flex;
+  gap: var(--spacing-md);
+}
+
+.btn-primary,
+.btn-secondary,
+.btn-create {
+  padding: var(--btn-padding-lg);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  transition: all var(--transition-base);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.btn-secondary svg,
+.btn-create svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.btn-primary {
+  background: var(--primary-color);
+  color: var(--text-white);
+  font-weight: 500;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-primary);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-dark);
+}
+
+.btn-secondary:hover {
+  background: var(--bg-secondary);
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.btn-delete {
+  background: transparent;
+  border: none;
+  color: var(--text-light);
+  cursor: pointer;
+  font-size: var(--font-size-3xl);
+  padding: 0;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-base);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  box-sizing: border-box;
+}
+
+.btn-delete svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.btn-delete:hover {
+  background: var(--error-light);
+  color: var(--error-color);
+  transform: scale(1.1);
+}
+
+.btn-danger {
+  height: var(--btn-height-lg);
+  min-height: var(--btn-height-lg);
+  padding: var(--btn-padding-lg);
+  background: var(--error-color);
+  color: var(--text-white);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--btn-font-size);
+  line-height: var(--btn-line-height);
+  font-weight: var(--font-weight-medium);
+  transition: all var(--transition-base);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #ff3333;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(255, 77, 77, 0.3);
+}
+
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.project-delete-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+}
+
+.project-delete-btn:hover:not(:disabled) {
+  background: var(--error-light);
+  color: var(--error-color);
+}
+
+/* Create Project Dialog (统一样式) */
+.create-project-modal {
+  width: min(520px, 94vw);
+}
+
+.config-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-xl) var(--spacing-xl);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.config-modal-header h3 {
+  margin: 0;
+  font-size: var(--font-size-xl);
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.config-modal-content {
+  padding: var(--spacing-xl);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.config-modal-actions {
+  display: flex;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg) var(--spacing-xl);
+  border-top: 1px solid var(--border-color);
+  justify-content: flex-end;
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--spacing-xl);
+  /* Ensure grid can scroll within parent */
+  min-height: 0;
+}
+
+.project-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-xl);
+  cursor: pointer;
+  transition: all var(--transition-base);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.project-card:hover {
+  border-color: var(--primary-color);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+.project-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.project-card-header h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1.3em;
+  font-weight: 600;
+  flex: 1;
+}
+
+.project-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.project-status {
+  background: var(--bg-secondary);
+  color: var(--text-light);
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.project-description {
+  color: var(--text-light);
+  margin: 0;
+  font-size: 0.95em;
+  line-height: 1.5;
+  min-height: 2em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-clamp: 2;
+  word-break: break-word;
+}
+
+.project-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.project-id {
+  color: var(--text-light);
+  font-size: 0.85em;
+  font-family: monospace;
+  word-break: break-all;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+}
+
+.project-id code {
+  font-family: monospace;
+  word-break: break-all;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  display: inline-block;
+}
+
+.project-date {
+  color: var(--text-light);
+  font-size: 0.85em;
+}
+
+/* empty-state styles removed; Project now reuses training-empty styles from TrainingPanel.css */
+
+/* 弹窗样式 */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.2s;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.modal-content {
+  background: var(--bg-primary);
+  border-radius: 8px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  animation: slideUp 0.3s;
+  border: 1px solid var(--border-color);
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24px 30px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.modal-header h2 {
+  margin: 0;
+  color: var(--primary-color);
+  font-size: 1.5em;
+}
+
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--text-light);
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.modal-close svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.modal-close:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.modal-body {
+  padding: 30px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 20px 30px;
+  border-top: 1px solid var(--border-color);
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.form-group .required {
+  color: #ff6b6b;
+}
+
+.form-group input,
+.form-group textarea {
+  width: 100%;
+  padding: 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(10, 13, 22, 0.1);
+}
+
+.form-group textarea {
+  resize: vertical;
+  min-height: 100px;
+  font-family: inherit;
+}
+
+.form-error {
+  margin-top: 6px;
+  color: var(--error-color);
+  font-size: 12px;
+}
+
+/* 删除确认弹窗样式 */
+.delete-modal {
+  max-width: 450px;
+}
+
+.delete-warning {
+  text-align: center;
+  padding: 20px 0;
+}
+
+.warning-icon {
+  font-size: 3em;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-color);
+}
+
+.warning-icon svg {
+  width: 48px;
+  height: 48px;
+}
+
+.delete-warning p {
+  color: var(--text-secondary);
+  margin: 12px 0;
+  line-height: 1.6;
+}
+
+.delete-warning strong {
+  color: var(--primary-color);
+  font-weight: 600;
+}
+
+.warning-text {
+  color: #ff6b6b !important;
+  font-size: 0.9em;
+  margin-top: 16px !important;
+}
+

@@ -1,0 +1,87 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+backend/venv/
+backend/__pycache__/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# React build (will be built in Dockerfile)
+frontend/build/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# Datasets (mounted via volume)
+datasets/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Documentation
+README.md
+docs/
+
+# Scripts
+*.sh
+
+# Test files
+test_*.py
+*_test.py
+tests/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Model files (if too large, can be downloaded at runtime)
+*.pt
+*.onnx
+*.npy

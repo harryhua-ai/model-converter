@@ -65,3 +65,21 @@ backend/.env
 
 # Worktrees
 .worktrees/
+
+# 测试输出
+*.npy
+e2e_*.bin
+test-results/
+.playwright-mcp/
+
+# 调试截图
+*_screenshot.png
+*_error.png
+verification-*.png
+conversion_*.png
+
+# 进程 ID 文件
+*.pid
+
+# 外部依赖（如果不是 submodule）
+# AIToolStack/
