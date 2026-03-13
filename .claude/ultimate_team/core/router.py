@@ -25,7 +25,7 @@ class ScenarioRouter:
             - intent: 原始用户输入
             - scenario_id: 匹配的场景ID
             - confidence: 匹配置信度 (0-1)
-            - is_common_scenario: 是否为常见场景（置信度>0.3且非复杂）
+            - is_common_scenario: 是否为常见场景（置信度>0.7且非复杂）
             - complexity: 复杂度评估（simple/medium/complex）
         """
         # 使用场景匹配器
@@ -35,7 +35,7 @@ class ScenarioRouter:
         complexity = self._assess_complexity(user_input)
 
         # 判断是否为常见场景：需要足够的置信度且不是复杂场景
-        is_common = match_result.confidence > 0.3 and complexity != "complex"
+        is_common = match_result.confidence > 0.7 and complexity != "complex"
 
         return {
             "intent": user_input,
@@ -49,11 +49,9 @@ class ScenarioRouter:
         """评估输入复杂度
 
         评估规则：
-        - simple: 字符数<15 且无多任务标志
-        - medium: 字符数15-30 且无多任务标志
-        - complex: 字符数>30 或包含多任务标志
-
-        注意：中文文本按字符数计算，英文按单词数计算
+        - simple: 单词数<10 且无多任务标志
+        - medium: 单词数10-20 且无多任务标志
+        - complex: 单词数>20 或包含多任务标志
 
         Args:
             user_input: 用户输入
@@ -65,30 +63,15 @@ class ScenarioRouter:
         multi_task_indicators = ["同时", "并且", "加上"]
         has_multi_task = any(word in user_input for word in multi_task_indicators)
 
-        # 检测是否为中文文本
-        has_chinese = any('\u4e00' <= char <= '\u9fff' for char in user_input)
+        # 按空格分词计算单词数
+        word_count = len(user_input.split())
 
-        if has_multi_task:
+        if word_count < 10 and not has_multi_task:
+            return "simple"
+        elif word_count > 20 or has_multi_task:
             return "complex"
-
-        if has_chinese:
-            # 中文按字符数计算
-            char_count = len(user_input)
-            if char_count < 15:
-                return "simple"
-            elif char_count > 30:
-                return "complex"
-            else:
-                return "medium"
         else:
-            # 英文按单词数计算
-            word_count = len(user_input.split())
-            if word_count < 10:
-                return "simple"
-            elif word_count > 20:
-                return "complex"
-            else:
-                return "medium"
+            return "medium"
 
     def route(self, analysis: Dict) -> Tuple[str, Optional[Dict]]:
         """路由决策
