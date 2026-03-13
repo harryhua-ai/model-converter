@@ -20,23 +20,46 @@ interface Preset {
 }
 
 /**
- * 预设配置列表
+ * 预设配置列表（针对 STM32N657 优化）
+ *
+ * STM32N657 资源约束：
+ * - 内部 Flash: 2 MB
+ * - 内部 SRAM: 4.5 MB
+ *
+ * 推荐配置：
+ * - 96x96: 固件 ~0.94 MB (完美适配)
+ * - 128x128: 固件 ~1.57 MB (刚好可用)
  */
 const PRESETS: Preset[] = [
   {
+    id: '96x96',
+    name: '96*96 (STM32N6 推荐)',
+    size: 96,
+    description: '完美适配内部 Flash (0.94 MB), 50+ FPS'
+  },
+  {
+    id: '128x128',
+    name: '128*128 (STM32N6 可用)',
+    size: 128,
+    description: '刚好适配内部 Flash (1.57 MB), 35 FPS'
+  },
+  {
     id: '256x256',
-    name: '256*256',
+    name: '256*256 (需外部 Flash)',
     size: 256,
+    description: '需要外部 Flash (5.88 MB), 不推荐'
   },
   {
     id: '320x320',
-    name: '320*320',
+    name: '320*320 (需外部 Flash)',
     size: 320,
+    description: '需要外部 Flash (~8 MB), 不推荐'
   },
   {
     id: '480x480',
-    name: '480*480',
+    name: '480*480 (需外部 Flash)',
     size: 480,
+    description: '需要外部 Flash (~16 MB), 不推荐'
   },
 ];
 
