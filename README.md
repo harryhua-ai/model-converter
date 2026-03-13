@@ -22,15 +22,22 @@ cd model-converter
 python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# 安装 Python 依赖
+# 安装所有依赖（包含 ML 库）
 pip install -r backend/requirements.txt
-
-# 安装 ML 转换依赖
-pip install ultralytics tensorflow hydra-core opencv-python
 
 # 启动 Docker Desktop
 # 确保 Docker 正在运行
 docker --version
+```
+
+### 1.1 可选：配置环境变量
+
+```bash
+# 复制环境配置模板
+cp backend/.env.example backend/.env
+
+# 根据需要修改配置（可选）
+vim backend/.env
 ```
 
 ### 2. 启动服务

@@ -98,15 +98,11 @@ async def convert_model(
             )
 
     try:
-<<<<<<< Updated upstream
         # 4. Pydantic 验证配置
+        logger.info(f"[DEBUG] config_dict 类型: {type(config_dict)}")
+        logger.info(f"[DEBUG] config_dict 内容: {config_dict}")
         validated_config = ConversionConfig(**config_dict)
-=======
-        # 4. 配置已在上面的步骤 2 中解析
-        
-        # Pydantic 验证 - 会抛出 ValidationError
-        config = ConversionConfig(**config_dict)
->>>>>>> Stashed changes
+        logger.info(f"[DEBUG] validated_config 创建成功: {type(validated_config)}")
 
         # 5. 读取 YAML 文件(如果提供)
         class_def = None
@@ -167,8 +163,10 @@ async def convert_model(
             logger.info(f"校准数据集已保存: {calibration_dataset.filename}")
 
         # 7. 创建任务
+        logger.info(f"[DEBUG] 准备创建任务，validated_config 类型: {type(validated_config)}")
         task_manager = get_task_manager()
         task_id = task_manager.create_task(validated_config)
+        logger.info(f"[DEBUG] 任务创建成功: {task_id}")
 
         logger.info(f"创建转换任务: {task_id}")
         logger.info(f"模型文件: {model_file.filename}")
@@ -201,11 +199,17 @@ async def convert_model(
         # 检查是否是 Pydantic 验证错误
         from pydantic import ValidationError
         if isinstance(e, ValidationError):
+            import traceback
+            logger.error(f"[ERROR] ValidationError 发生位置:")
+            logger.error(traceback.format_exc())
+            logger.error(f"[ERROR] ValidationError 详情: {e}")
             raise HTTPException(
                 status_code=422,
                 detail=f"配置验证失败: {str(e)}"
             )
         logger.error(f"创建转换任务失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"创建任务失败: {str(e)}")
 
 

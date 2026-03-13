@@ -51,9 +51,13 @@ uploads/
 outputs/
 *.log
 frontend/dist/
-.pytest_cache/
+pytest_cache/
 .coverage
 htmlcov/
+
+# Environment files
+.env
+backend/.env
 
 # Claude
 .claude/projects/

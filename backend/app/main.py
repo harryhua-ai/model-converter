@@ -21,6 +21,13 @@ async def lifespan(app: FastAPI):
     logger.info("Model Converter API 启动中...")
     logger.info("=" * 60)
 
+    # 验证配置加载
+    from .core.config import settings
+    logger.info(f"✅ 配置已加载")
+    logger.info(f"   - API: {settings.HOST}:{settings.PORT}{settings.API_PREFIX}")
+    logger.info(f"   - Docker: {settings.NE301_DOCKER_IMAGE}")
+    logger.info(f"   - 日志级别: {settings.LOG_LEVEL}")
+
     # 检查环境状态
     from .core.environment import EnvironmentDetector
     detector = EnvironmentDetector()

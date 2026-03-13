@@ -244,17 +244,42 @@ class DockerToolChainAdapter:
         logger.info(f"步骤 1: 导出 {model_path} 为 TFLite 格式")
 
         model = YOLO(model_path)
-        model.export(format="tflite", imgsz=input_size, int8=False)
+        export_result = model.export(format="tflite", imgsz=input_size, int8=False)
 
-        # 查找生成的 TFLite 文件
-        tflite_files = list(Path(".").glob("*_float32.tflite"))
-        if not tflite_files:
-            tflite_files = list(Path(".").glob("*.tflite"))
+        # 从导出结果中获取文件路径
+        # YOLO export 返回一个 ExportResults 对象
+        if hasattr(export_result, 'saved_model') and export_result.saved_model:
+            # 导出为 SavedModel 格式
+            saved_model_path = Path(export_result.saved_model)
+            tflite_files = list(saved_model_path.glob("*.tflite"))
+            if tflite_files:
+                logger.info(f"✅ TFLite 导出成功: {tflite_files[0]}")
+                return str(tflite_files[0])
 
-        if not tflite_files:
-            raise FileNotFoundError("TFLite 导出失败")
+        # 备用：在临时目录中查找
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # 搜索可能的 TFLite 文件
+            search_paths = [
+                Path(tmp_dir),
+                Path("/tmp"),
+                Path(".").parent
+            ]
 
-        return str(tflite_files[0])
+            for search_path in search_paths:
+                tflite_files = list(search_path.rglob("*_float32.tflite"))
+                if not tflite_files:
+                    tflite_files = list(search_path.rglob("*.tflite"))
+
+                if tflite_files:
+                    logger.info(f"✅ TFLite 导出成功: {tflite_files[0]}")
+                    # 复制到当前工作目录以便后续使用
+                    import shutil
+                    local_copy = Path(".").name / tflite_files[0].name
+                    shutil.copy2(tflite_files[0], local_copy)
+                    return str(local_copy)
+
+        raise FileNotFoundError("TFLite 导出失败：未找到生成的 TFLite 文件")
 
     def _quantize_tflite(
         self,

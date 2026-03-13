@@ -32,20 +32,33 @@ class TaskManager:
 
     def create_task(self, config: ConversionConfig) -> str:
         """创建新任务"""
+        import traceback
+
         task_id = str(uuid.uuid4())
         now = datetime.now()
 
-        task = ConversionTask(
-            task_id=task_id,
-            status="pending",
-            progress=0,
-            current_step="",
-            config=config,
-            created_at=now,
-            updated_at=now
-        )
+        logger.info(f"[TaskManager.create_task] 开始创建任务")
+        logger.info(f"[TaskManager.create_task] config 类型: {type(config)}")
+        logger.info(f"[TaskManager.create_task] config 值: {config}")
+
+        try:
+            task = ConversionTask(
+                task_id=task_id,
+                status="pending",
+                progress=0,
+                current_step="",
+                config=config,
+                created_at=now,
+                updated_at=now
+            )
+            logger.info(f"[TaskManager.create_task] ConversionTask 创建成功")
+        except Exception as e:
+            logger.error(f"[TaskManager.create_task] ConversionTask 创建失败: {e}")
+            logger.error(traceback.format_exc())
+            raise
 
         self.tasks[task_id] = task
+        logger.info(f"[TaskManager.create_task] 任务已存储: {task_id}")
         return task_id
 
     def get_task(self, task_id: str) -> Optional[ConversionTask]:
