@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(find AIToolStack/backend -name \"*ne301*\" -o -name \"*docker*\" 2>/dev/null | grep -E \"\\\\.\\(py|sh\\)$\")"
+    ]
+  }
+}

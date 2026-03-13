@@ -411,10 +411,30 @@ class DockerToolChainAdapter:
             confidence_threshold=config.get("confidence_threshold", 0.25),
         )
 
+        # ✅ 调试日志：验证 JSON 配置完整性
+        config_size = len(json.dumps(json_config, indent=2))
+        logger.info(f"📊 生成的 JSON 配置大小: {config_size} 字节")
+
+        if config_size < 1000:
+            logger.warning(f"⚠️  JSON 配置过小，可能不完整")
+            logger.debug(f"JSON 配置内容:\n{json.dumps(json_config, indent=2)}")
+        else:
+            logger.info(f"✅ JSON 配置大小正常（完整配置）")
+
         # 写入 JSON 配置
         json_file = model_dir / f"{model_name}.json"
         with open(json_file, "w") as f:
             json.dump(json_config, f, indent=2)
+
+        # ✅ 验证文件写入
+        file_size = json_file.stat().st_size
+        logger.info(f"✅ JSON 文件已写入: {json_file} ({file_size} 字节)")
+
+        if file_size < 1000:
+            logger.warning(f"⚠️  JSON 文件过小，请检查配置生成逻辑")
+
+        # ✅ 更新 Makefile 中的 MODEL_NAME
+        self._update_model_makefile(model_name)
 
         logger.info(f"✅ NE301 项目准备完成: {ne301_project}")
         logger.info(f"✅ JSON 配置文件: {json_file}")
@@ -559,6 +579,46 @@ class DockerToolChainAdapter:
 
         logger.info(f"✅ NE301 打包成功: {final_bin_path}")
         return str(final_bin_path)
+
+    def _update_model_makefile(self, model_name: str) -> None:
+        """更新 Model/Makefile 中的 MODEL_NAME 变量
+
+        Args:
+            model_name: 模型名称（不含扩展名）
+        """
+        import re
+
+        makefile_path = self.ne301_project_path / "Model" / "Makefile"
+
+        if not makefile_path.exists():
+            logger.warning(f"⚠️  Makefile 不存在: {makefile_path}")
+            return
+
+        try:
+            # 读取 Makefile 内容
+            with open(makefile_path, 'r') as f:
+                content = f.read()
+
+            # 替换 MODEL_NAME 行
+            pattern = r'^MODEL_NAME\s*=\s*.+$'
+            replacement = f'MODEL_NAME = {model_name}'
+
+            new_content = re.sub(
+                pattern,
+                replacement,
+                content,
+                flags=re.MULTILINE
+            )
+
+            # 写回 Makefile
+            with open(makefile_path, 'w') as f:
+                f.write(new_content)
+
+            logger.info(f"✅ Makefile 已更新: MODEL_NAME = {model_name}")
+
+        except Exception as e:
+            logger.error(f"❌ 更新 Makefile 失败: {e}")
+            # 不中断流程，继续执行
 
     def _provide_quantized_tflite_output(
         self,

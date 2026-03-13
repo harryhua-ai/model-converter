@@ -298,5 +298,14 @@ def generate_ne301_json_config(
         }
     }
 
-    logger.info(f"✅ NE301 JSON 配置生成完成")
+    # ✅ 调试日志
+    import json
+    config_size = len(json.dumps(config, indent=2))
+    logger.info(f"✅ NE301 JSON 配置生成完成（大小: {config_size} 字节）")
+
+    if config_size < 1000:
+        logger.warning(f"⚠️  配置大小异常，完整配置:\n{json.dumps(config, indent=2)}")
+    else:
+        logger.debug(f"JSON 配置预览: {json.dumps(config, indent=2)[:500]}...")
+
     return config
