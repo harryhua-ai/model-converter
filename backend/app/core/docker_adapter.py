@@ -1,23 +1,38 @@
-# backend/app/core/docker_adapter.py
+"""
+Docker 工具链适配器（容器化版本）
+
+参考：camthink-ai/AIToolStack/backend/utils/ne301_export.py
+"""
 import docker
-import json
+import subprocess
 import logging
+import threading
+import queue
+import time
+import json
+import os
+import shutil
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Callable, Dict, Any, Optional
+
+from .config import settings
 
 logger = logging.getLogger(__name__)
 
+
 class DockerToolChainAdapter:
-    """Docker 工具链适配器（混合架构核心）"""
+    """Docker 工具链适配器"""
 
     def __init__(self):
+        self.ne301_image = settings.NE301_DOCKER_IMAGE
+        self.ne301_project_path = Path(settings.NE301_PROJECT_PATH)
+
         try:
             self.client = docker.from_env()
+            logger.info(f"Docker 客户端初始化成功，NE301 镜像: {self.ne301_image}")
         except Exception as e:
             logger.error(f"Failed to initialize Docker client: {e}")
             self.client = None
-
-        self.image_name = "camthink/ne301-dev:latest"
 
     def check_docker(self) -> tuple[bool, str]:
         """检查 Docker 是否可用
@@ -35,183 +50,410 @@ class DockerToolChainAdapter:
             return False, f"Docker not available: {str(e)}"
 
     def check_image(self) -> bool:
-        """检查镜像是否存在"""
+        """检查 NE301 镜像是否存在
+
+        Returns:
+            镜像是否存在
+        """
         if not self.client:
             return False
 
         try:
-            self.client.images.get(self.image_name)
+            self.client.images.get(self.ne301_image)
             return True
         except docker.errors.ImageNotFound:
             return False
+        except Exception as e:
+            logger.error(f"检查镜像失败: {e}")
+            return False
 
-    def pull_image(
-        self,
-        progress_callback: Optional[Callable[[int], None]] = None
-    ) -> bool:
-        """拉取 Docker 镜像
+    def _get_host_path(self, container_path: Path) -> Optional[str]:
+        """获取宿主机路径（4级回退机制）
+
+        参考 AIToolStack 的实现，确保 Docker-in-Docker 场景下正确映射路径
 
         Args:
-            progress_callback: 进度回调函数(progress: int)
+            container_path: 容器内路径
 
         Returns:
-            是否成功
+            宿主机路径，如果获取失败则返回 None
         """
-        if not self.client:
-            logger.error("Docker client not available")
-            return False
+        import subprocess
+        import json
 
+        container_path_str = str(container_path)
+
+        # 优先级 1: 使用 docker inspect（最精确）
+        container_name = os.environ.get("CONTAINER_NAME", "model-converter-api")
         try:
-            logger.info(f"Pulling image {self.image_name}...")
+            inspect_cmd = [
+                "docker", "inspect", container_name,
+                "--format", "{{json .Mounts}}"
+            ]
+            result = subprocess.run(
+                inspect_cmd,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
 
-            for layer in self.client.images.pull(
-                self.image_name,
-                stream=True,
-                decode=True
-            ):
-                if progress_callback and "progressDetail" in layer:
-                    progress = layer["progressDetail"].get("current", 0)
-                    total = layer["progressDetail"].get("total", 100)
-                    progress_callback(int(progress / total * 100))
-
-            logger.info("Image pulled successfully")
-            return True
-
+            if result.returncode == 0:
+                all_mounts = json.loads(result.stdout)
+                for mount in all_mounts:
+                    if mount.get("Destination") == container_path_str:
+                        host_path = mount.get("Source")
+                        logger.info(f"✓ Got host path from docker inspect: {host_path}")
+                        return host_path
         except Exception as e:
-            logger.error(f"Failed to pull image: {e}")
-            return False
+            logger.warning(f"docker inspect failed: {e}")
+
+        # 优先级 2: 从其他挂载点推断
+        try:
+            inspect_cmd = [
+                "docker", "inspect", container_name,
+                "--format", "{{json .Mounts}}"
+            ]
+            result = subprocess.run(
+                inspect_cmd,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            if result.returncode == 0:
+                all_mounts = json.loads(result.stdout)
+                for mount in all_mounts:
+                    destination = mount.get("Destination")
+                    if destination in ["/app/uploads", "/app/outputs"]:
+                        # 从 uploads 或 outputs 推断项目根目录
+                        source = Path(mount.get("Source"))
+                        project_root = source.parent.parent
+                        inferred_path = project_root / "ne301"
+                        if inferred_path.exists():
+                            logger.info(f"✓ Inferred host path: {inferred_path}")
+                            return str(inferred_path)
+        except Exception as e:
+            logger.warning(f"Path inference failed: {e}")
+
+        # 优先级 3: 从 /proc/mounts 读取
+        try:
+            with open("/proc/mounts", "r") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[1] == container_path_str:
+                        host_path = parts[0]
+                        logger.info(f"✓ Got host path from /proc/mounts: {host_path}")
+                        return host_path
+        except Exception as e:
+            logger.warning(f"Failed to read /proc/mounts: {e}")
+
+        # 优先级 4: 使用环境变量（最后手段）
+        host_path = os.environ.get("NE301_HOST_PATH")
+        if host_path:
+            logger.info(f"✓ Got host path from env var: {host_path}")
+            return host_path
+
+        logger.error(f"✗ Failed to get host path for: {container_path_str}")
+        return None
 
     def convert_model(
         self,
         task_id: str,
         model_path: str,
         config: Dict[str, Any],
-        yaml_path: Optional[str] = None
+        calib_dataset_path: Optional[str] = None,
+        yaml_path: Optional[str] = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None
     ) -> str:
-        """使用 Docker 容器将量化 TFLite 模型转换为 NE301 .bin
+        """完整转换流程：PyTorch → TFLite → 量化 TFLite → NE301 .bin
+
+        参考 AIToolStack 的实现方式
 
         Args:
             task_id: 任务 ID
-            model_path: 量化后的 TFLite 模型路径
+            model_path: PyTorch 模型路径
             config: 转换配置
-            yaml_path: YAML 类别定义文件（可选）
+            calib_dataset_path: 校准数据集路径
+            yaml_path: YAML 文件路径
+            progress_callback: 进度回调函数
+
+        Returns:
+            NE301 .bin 文件路径
+        """
+        if not self.client:
+            raise RuntimeError("Docker client not available")
+
+        logger.info(f"开始任务 {task_id} 的转换流程")
+
+        try:
+            # 步骤 1: PyTorch → TFLite (0-30%)
+            if progress_callback:
+                progress_callback(10, "正在导出 TFLite 模型...")
+
+            tflite_path = self._export_tflite(
+                model_path,
+                config["input_size"]
+            )
+            logger.info(f"✅ TFLite 导出成功: {tflite_path}")
+
+            # 步骤 2: TFLite → 量化 TFLite (30-60%)
+            if progress_callback:
+                progress_callback(35, "正在量化模型...")
+
+            quantized_tflite = self._quantize_tflite(
+                tflite_path,
+                config["input_size"],
+                calib_dataset_path,
+                config
+            )
+            logger.info(f"✅ 量化成功: {quantized_tflite}")
+
+            # 步骤 3: 准备 NE301 项目 (60-70%)
+            if progress_callback:
+                progress_callback(70, "正在准备 NE301 项目...")
+
+            ne301_project = self._prepare_ne301_project(
+                task_id,
+                quantized_tflite,
+                config
+            )
+
+            # 步骤 4: NE301 打包 (70-100%)
+            if progress_callback:
+                progress_callback(75, "正在生成 NE301 部署包...")
+
+            bin_path = self._build_ne301_model(
+                task_id,
+                ne301_project
+            )
+
+            if progress_callback:
+                progress_callback(100, "转换完成!")
+
+            logger.info(f"✅ 转换成功: {bin_path}")
+            return bin_path
+
+        except Exception as e:
+            logger.error(f"转换失败: {e}")
+            raise
+
+    def _export_tflite(self, model_path: str, input_size: int) -> str:
+        """步骤 1: PyTorch → TFLite"""
+        from ultralytics import YOLO
+
+        logger.info(f"步骤 1: 导出 {model_path} 为 TFLite 格式")
+
+        model = YOLO(model_path)
+        model.export(format="tflite", imgsz=input_size, int8=False)
+
+        # 查找生成的 TFLite 文件
+        tflite_files = list(Path(".").glob("*_float32.tflite"))
+        if not tflite_files:
+            tflite_files = list(Path(".").glob("*.tflite"))
+
+        if not tflite_files:
+            raise FileNotFoundError("TFLite 导出失败")
+
+        return str(tflite_files[0])
+
+    def _quantize_tflite(
+        self,
+        tflite_path: str,
+        input_size: int,
+        calib_dataset_path: Optional[str],
+        config: Dict[str, Any]
+    ) -> str:
+        """步骤 2: TFLite → 量化 TFLite
+
+        使用 Hydra 配置，参考 AIToolStack 的 tflite_quant.py
+        """
+        logger.info(f"步骤 2: 量化 {tflite_path}")
+
+        import tempfile
+        import yaml
+        from omegaconf import OmegaConf, DictConfig
+
+        # 准备 Hydra 配置
+        hydra_config = {
+            "model": {
+                "model_path": str(Path(tflite_path).resolve()),
+                "input_shape": [input_size, input_size, 3]
+            },
+            "quantization": {
+                "calib_dataset_path": calib_dataset_path or "",
+                "export_path": "/app/outputs",
+                "fake": calib_dataset_path is None  # 如果没有校准数据集，使用 fake quantization
+            }
+        }
+
+        # 写入临时配置文件
+        config_file = tempfile.mktemp(suffix=".yaml", prefix="quant_config_")
+        with open(config_file, "w") as f:
+            yaml.dump(hydra_config, f)
+
+        # 执行量化脚本
+        cmd = [
+            "python", "-m", "app.tools.quantization.tflite_quant",
+            "--config-name", "user_config_quant",
+            f"model.model_path={hydra_config['model']['model_path']}",
+            f"model.input_shape=[{input_size},{input_size},3]",
+            f"quantization.calib_dataset_path={hydra_config['quantization']['calib_dataset_path']}",
+            f"quantization.export_path={hydra_config['quantization']['export_path']}"
+        ]
+
+        logger.info(f"执行量化命令: {' '.join(cmd)}")
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600
+        )
+
+        if result.returncode != 0:
+            logger.error(f"量化失败: {result.stderr}")
+            raise RuntimeError(f"TFLite 量化失败: {result.stderr}")
+
+        # 查找量化后的模型
+        quantized_files = list(Path("/app/outputs").glob("*.tflite"))
+        if not quantized_files:
+            raise FileNotFoundError("量化后的模型文件未找到")
+
+        return str(quantized_files[0])
+
+    def _prepare_ne301_project(
+        self,
+        task_id: str,
+        quantized_tflite: str,
+        config: Dict[str, Any]
+    ) -> Path:
+        """步骤 3: 准备 NE301 项目目录
+
+        参考 AIToolStack 的 ne301_export.py
+        """
+        logger.info("步骤 3: 准备 NE301 项目")
+
+        # 确保 NE301 项目目录存在
+        ne301_project = self.ne301_project_path
+        ne301_project.mkdir(parents=True, exist_ok=True)
+
+        # 创建 Model 目录结构
+        model_dir = ne301_project / "Model" / "weights"
+        model_dir.mkdir(parents=True, exist_ok=True)
+
+        # 复制 TFLite 模型
+        model_name = f"model_{task_id}"
+        tflite_target = model_dir / f"{model_name}.tflite"
+        shutil.copy2(quantized_tflite, tflite_target)
+
+        # 生成 JSON 配置
+        json_config = {
+            "input_size": config["input_size"],
+            "num_classes": config["num_classes"],
+            "model_type": config["model_type"],
+            "quantization": config.get("quantization", "int8")
+        }
+
+        json_file = model_dir / f"{model_name}.json"
+        with open(json_file, "w") as f:
+            json.dump(json_config, f, indent=2)
+
+        logger.info(f"✅ NE301 项目准备完成: {ne301_project}")
+        return ne301_project
+
+    def _build_ne301_model(
+        self,
+        task_id: str,
+        ne301_project_path: Path
+    ) -> str:
+        """步骤 4: 调用 NE301 容器打包（改进版）
+
+        参考 AIToolStack 的 _build_with_docker() 实现
+
+        Args:
+            task_id: 任务 ID
+            ne301_project_path: NE301 项目路径
 
         Returns:
             NE301 .bin 文件路径
 
         Raises:
-            RuntimeError: Docker client not available
-            FileNotFoundError: 模型文件不存在
-            ValueError: 配置无效
+            RuntimeError: 如果无法获取宿主机路径或打包失败
         """
-        if not self.client:
-            raise RuntimeError("Docker client not available")
+        logger.info(f"步骤 4: 调用 NE301 容器打包")
 
-        logger.info(f"步骤 3: 使用 Docker 转换 {model_path} 为 NE301 .bin")
+        model_name = f"model_{task_id}"
 
-        # 验证模型文件存在
-        model_path_obj = Path(model_path)
-        if not model_path_obj.exists():
-            raise FileNotFoundError(f"模型文件不存在: {model_path}")
+        # ✅ 获取宿主机路径（关键改进）
+        host_path = self._get_host_path(Path("/workspace/ne301"))
 
-        # 准备输出路径
-        output_dir = Path("outputs")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_filename = f"ne301_model_{task_id}.bin"
-        output_path = output_dir / output_filename
-
-        # 准备 NE301 JSON 配置
-        ne301_config = self._prepare_ne301_config(task_id, config, yaml_path)
-        config_path = output_dir / f"{task_id}_config.json"
-        with open(config_path, "w") as f:
-            json.dump(ne301_config, f, indent=2)
-
-        # 准备卷映射
-        model_dir = model_path_obj.parent.resolve()
-        output_dir_abs = output_dir.absolute()
-
-        volumes = {
-            str(model_dir): {"bind": "/input", "mode": "ro"},
-            str(output_dir_abs): {"bind": "/output", "mode": "rw"}
-        }
-
-        # 构建命令
-        model_filename = Path(model_path).name
-        command = [
-            "python",
-            "/workspace/ne301/Script/model_packager.py",
-            "create",
-            "--model", f"/input/{model_filename}",
-            "--config", json.dumps(ne301_config),
-            "--output", f"/output/{output_filename}"
-        ]
-
-        try:
-            logger.info(f"启动 Docker 容器执行转换...")
-
-            # 运行容器（同步等待）
-            result = self.client.containers.run(
-                self.image_name,
-                command=command,
-                volumes=volumes,
-                remove=True,
-                detach=False,
-                mem_limit="2g",
-                cpu_count=1
+        if not host_path:
+            raise RuntimeError(
+                "❌ 无法获取宿主机路径！\n"
+                "请检查：\n"
+                "1. docker-compose.yml 中是否配置了 ./ne301:/workspace/ne301\n"
+                f"2. CONTAINER_NAME 环境变量是否正确（当前: {os.environ.get('CONTAINER_NAME', '未设置')}）\n"
+                "3. Docker 套接字是否正确挂载\n"
+                "调试命令：docker inspect model-converter-api | jq '.[0].Mounts'"
             )
 
-            logger.info(f"Docker 容器输出: {result.decode('utf-8')}")
+        logger.info(f"✓ 使用宿主机路径: {host_path}")
 
-            # 验证输出文件
-            if not output_path.exists():
-                raise FileNotFoundError(f"NE301 .bin 文件未生成: {output_path}")
+        # 构造 Docker 命令（使用宿主机路径）
+        docker_cmd = [
+            "docker", "run", "--rm",
+            "-v", f"{host_path}:/workspace/ne301",  # ✅ 宿主机路径
+            "-w", "/workspace/ne301",
+            self.ne301_image,
+            "bash", "-c",
+            f"cd /workspace/ne301 && "
+            f"if [ ! -f Model/weights/{model_name}.tflite ]; then "
+            f"  echo '❌ Model file not found'; exit 1; "
+            f"fi && "
+            f"echo '✓ Starting NE301 build...' && "
+            f"make model && "
+            f"make pkg-model && "
+            f"echo '✓ Package created'"
+        ]
 
-            logger.info(f"✅ 转换成功: {output_path}")
-            return str(output_path)
+        logger.info(f"执行 NE301 打包命令...")
 
-        except Exception as e:
-            logger.error(f"转换失败 for task {task_id}: {e}")
-            raise
+        # 执行命令并实时输出日志
+        process = subprocess.Popen(
+            docker_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
 
-    def _prepare_ne301_config(
-        self,
-        task_id: str,
-        config: Dict[str, Any],
-        yaml_path: Optional[str]
-    ) -> Dict[str, Any]:
-        """准备 NE301 JSON 配置
+        # 实时输出日志
+        output_lines = []
+        for line in process.stdout:
+            line = line.strip()
+            output_lines.append(line)
+            logger.info(f"[NE301] {line}")
 
-        Args:
-            task_id: 任务 ID
-            config: 转换配置
-            yaml_path: YAML 类别定义文件路径（可选）
+        process.wait(timeout=600)
 
-        Returns:
-            NE301 JSON 配置字典
-        """
-        ne301_config = {
-            "model_name": f"ne301_model_{task_id}",
-            "input_size": config["input_size"],
-            "num_classes": config["num_classes"],
-            "confidence_threshold": config.get("confidence_threshold", 0.25),
-            "model_type": config["model_type"],
-            "quantization": config.get("quantization", "int8")
-        }
+        if process.returncode != 0:
+            error_output = "\n".join(output_lines[-50:])  # 最后 50 行
+            raise RuntimeError(f"❌ NE301 打包失败:\n{error_output}")
 
-        # 如果有 YAML 文件，添加类别信息
-        if yaml_path and Path(yaml_path).exists():
-            try:
-                import yaml
-                with open(yaml_path) as f:
-                    yaml_data = yaml.safe_load(f)
-                    # 尝试读取类别名称
-                    for key in ["names", "classes", "labels", "categories"]:
-                        if key in yaml_data:
-                            ne301_config["class_names"] = yaml_data[key]
-                            break
-            except ImportError:
-                logger.warning("PyYAML 未安装，跳过 YAML 文件解析")
-            except Exception as e:
-                logger.warning(f"解析 YAML 文件失败: {e}")
+        # 查找生成的 .bin 文件
+        bin_files = list(ne301_project_path.glob("build/*.bin"))
+        if not bin_files:
+            # 如果 build 目录中没有，查找整个项目
+            bin_files = list(ne301_project_path.rglob("*.bin"))
 
-        return ne301_config
+        if not bin_files:
+            raise FileNotFoundError("❌ NE301 .bin 文件未生成")
+
+        # 复制到输出目录
+        output_dir = Path("/app/outputs")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        final_bin_path = output_dir / f"ne301_model_{task_id}.bin"
+        shutil.copy2(bin_files[0], final_bin_path)
+
+        logger.info(f"✅ 转换成功: {final_bin_path}")
+        return str(final_bin_path)

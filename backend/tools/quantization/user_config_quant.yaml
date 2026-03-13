@@ -1,0 +1,20 @@
+# Model configuration
+model:
+    name: yolov8n_custom
+    uc: od_coco
+    model_path: ./saved_model  # 运行时替换
+    input_shape: [480, 480, 3]  # 运行时替换
+
+# Quantization settings
+quantization:
+    fake: False
+    quantization_type: per_channel
+    quantization_input_type: uint8
+    quantization_output_type: int8
+    calib_dataset_path: ./calibration_dataset  # 运行时替换
+    export_path: ./quantized_models
+    max_calib_images: 200  # ✅ 限制图片数量（防止 OOM）
+
+# Preprocessing parameters
+pre_processing:
+    rescaling: {scale: 255, offset: 0}

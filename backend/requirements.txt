@@ -1,3 +1,4 @@
+# FastAPI 核心
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
 python-multipart==0.0.9
@@ -5,6 +6,46 @@ pydantic>=2.10.0
 docker==7.1.0
 websockets==13.1
 pyyaml==6.0.1
+
+# 配置管理
+pydantic-settings>=2.6.0
+python-dotenv==1.0.1
+
+# 测试
 pytest==8.3.4
 pytest-cov==6.0.0
 httpx==0.27.0
+
+# ============================================================
+# ML 转换依赖（参考 AIToolStack 的兼容版本组合）
+# ============================================================
+
+# TensorFlow 核心（宽版本范围）
+tensorflow>=2.15.0,<2.20.0
+tf_keras>=2.15.0,<2.20.0
+
+# ONNX 工具链（宽版本范围）
+onnx>=1.12.0,<1.20.0
+onnx2tf>=1.26.0
+onnxruntime
+ai-edge-litert>=1.2.0,<1.4.0
+
+# PyTorch 生态
+ultralytics>=8.3.229
+torch>=2.4.0
+torchvision>=0.19.0
+opencv-python>=4.8.0.76
+
+# 量化和配置
+hydra-core>=1.3.2
+omegaconf>=2.3.0
+munch>=4.0.0
+tqdm>=4.66.0
+
+# ============================================================
+# 重要说明
+# ============================================================
+# 1. ❌ 不显式声明 numpy（让 TensorFlow 自动管理）
+# 2. ❌ 不显式声明 ml_dtypes（让 TensorFlow 自动管理）
+# 3. ✅ 使用宽版本范围（允许 pip 解析兼容组合）
+# 4. ✅ 添加完整的 ONNX 工具链

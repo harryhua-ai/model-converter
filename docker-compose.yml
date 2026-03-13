@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: model-converter-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - uploads:/app/uploads:rw
+      - outputs:/app/outputs:rw
+      - ./ne301:/workspace/ne301:rw
+    environment:
+      - NE301_DOCKER_IMAGE=camthink/ne301-dev:latest
+      - NE301_PROJECT_PATH=/workspace/ne301
+      - CONTAINER_NAME=model-converter-api
+      - PYTHONUNBUFFERED=1
+    networks:
+      - conversion_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  uploads:
+  outputs:
+
+networks:
+  conversion_network:
+    driver: bridge
