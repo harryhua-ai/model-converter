@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  api:
+    image: model-converter-api
+    container_name: model-converter-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - uploads:/app/uploads:rw
+      - outputs:/app/outputs:rw
+      - ne301_workspace:/workspace:rw  # 挂载到 /workspace，与 NE301 镜像的工作目录一致
+      # 挂载本地代码用于测试（改为读写以支持 .pyc 缓存更新）
+      - ./frontend/dist:/app/frontend/dist:ro
+      - ./backend/app:/app/app:rw
+      - ./backend/tools:/app/tools:rw
+    environment:
+      - NE301_DOCKER_IMAGE=camthink/ne301-dev:latest
+      - NE301_PROJECT_PATH=/workspace  # 容器内 NE301 项目路径（命名卷挂载点）
+      - CONTAINER_NAME=model-converter-api
+      - PYTHONUNBUFFERED=1
+    networks:
+      - conversion_network
+    restart: unless-stopped
+    # 增加内存限制以避免 OOM
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    # 启动前清除 Python 缓存
+    command: ["sh", "-c", "find /app/app -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true && cd /app && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"]
+
+volumes:
+  uploads:
+  outputs:
+  ne301_workspace:  # NE301 工作区命名卷
+
+networks:
+  conversion_network:
+    driver: bridge

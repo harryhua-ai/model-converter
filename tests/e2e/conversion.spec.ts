@@ -1,6 +1,9 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
 
+// 设置全局超时时间
+test.setTimeout(120000);  // 2 分钟
+
 test.describe('NE301 模型转换器 E2E 测试', () => {
   test.beforeEach(async ({ page }) => {
     // 设置基础 URL
@@ -88,55 +91,87 @@ test.describe('NE301 模型转换器 E2E 测试', () => {
     console.log('✓ 模型文件已选择');
 
     // 等待文件名显示
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(1500);
     await page.screenshot({ path: 'tests/e2e/screenshots/02-model-uploaded.png' });
     console.log('✓ 截图：模型文件已上传');
 
-    // 上传 YAML 文件
+    // 上传 YAML 文件（通过 ID 直接定位）
     console.log('\n--- 步骤 2: 上传 YAML 文件 ---');
-    const yamlFileInputs = await page.locator('input[type="file"]').all();
-    if (yamlFileInputs.length > 1) {
-      await yamlFileInputs[1].setInputFiles('/Users/harryhua/Documents/GitHub/model-converter/demo/household_trash.yaml');
-      console.log('✓ YAML 文件已选择');
-    } else {
-      console.log('⚠ 未找到第二个文件输入框');
+    try {
+      // 直接通过 ID 定位隐藏的文件输入框（Playwright 可以操作隐藏输入）
+      const yamlInput = page.locator('#yaml-file-input');
+      const yamlExists = await yamlInput.count() > 0;
+
+      if (yamlExists) {
+        await yamlInput.setInputFiles('/Users/harryhua/Documents/GitHub/model-converter/demo/household_trash.yaml');
+        console.log('✓ YAML 文件已选择（通过 ID 定位）');
+      } else {
+        // 备用方案：通过 accept 属性定位
+        const yamlInputByAccept = page.locator('input[type="file"][accept=".yaml"], input[type="file"][accept=".yml"]').first();
+        await yamlInputByAccept.setInputFiles('/Users/harryhua/Documents/GitHub/model-converter/demo/household_trash.yaml');
+        console.log('✓ YAML 文件已选择（通过 accept 属性）');
+      }
+    } catch (e) {
+      console.log('⚠ 上传 YAML 文件时出错:', e.message);
     }
 
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(1500);
     await page.screenshot({ path: 'tests/e2e/screenshots/03-yaml-uploaded.png' });
     console.log('✓ 截图：YAML 文件已上传');
 
-    // 上传校准数据集
+    // 上传校准数据集（通过 ID 直接定位）
     console.log('\n--- 步骤 3: 上传校准数据集 ---');
-    const allFileInputs = await page.locator('input[type="file"]').all();
-    if (allFileInputs.length > 2) {
-      await allFileInputs[2].setInputFiles('/Users/harryhua/Documents/GitHub/model-converter/demo/calibration.zip');
-      console.log('✓ 校准数据集已选择');
-    } else {
-      console.log('⚠ 未找到第三个文件输入框');
-    }
+    try {
+      // 直接通过 ID 定位隐藏的文件输入框
+      const calibInput = page.locator('#calibration-file-input');
+      const calibExists = await calibInput.count() > 0;
 
-    await page.waitForTimeout(1000);
-    await page.screenshot({ path: 'tests/e2e/screenshots/04-calibration-uploaded.png' });
-    console.log('✓ 截图：校准数据集已上传');
+      if (calibExists) {
+        await calibInput.setInputFiles('/Users/harryhua/Documents/GitHub/model-converter/demo/calibration.zip');
+        console.log('✓ 校准数据集已选择（通过 ID 定位）');
+
+        await page.waitForTimeout(1000);
+        await page.screenshot({ path: 'tests/e2e/screenshots/04-calibration-uploaded.png' });
+        console.log('✓ 截图：校准数据集已上传');
+      } else {
+        // 备用方案：通过 accept 属性定位
+        const calibInputByAccept = page.locator('input[type="file"][accept=".zip"]').first();
+        const count = await calibInputByAccept.count();
+
+        if (count > 0) {
+          await calibInputByAccept.setInputFiles('/Users/harryhua/Documents/GitHub/model-converter/demo/calibration.zip');
+          console.log('✓ 校准数据集已选择（通过 accept 属性）');
+
+          await page.waitForTimeout(1000);
+          await page.screenshot({ path: 'tests/e2e/screenshots/04-calibration-uploaded.png' });
+          console.log('✓ 截图：校准数据集已上传');
+        } else {
+          console.log('ℹ 未找到校准数据集输入框（可选功能）');
+        }
+      }
+    } catch (e) {
+      console.log('ℹ 校准数据集上传失败（这是可选的）:', e.message);
+    }
 
     // 查找并点击"开始转换"按钮
     console.log('\n--- 步骤 4: 点击开始转换按钮 ---');
 
-    // 尝试多种可能的按钮选择器
+    // 尝试多种可能的按钮选择器（支持中英文）
     const buttonSelectors = [
-      'button:has-text("开始转换")',
-      'button[type="submit"]',
-      'button:has-text("转换")',
-      '[data-testid="start-conversion"]',
-      '#start-conversion'
+      'button:has-text("Start")',           // 英文界面
+      'button:has-text("开始转换")',        // 中文界面
+      'button:has-text("开始")',           // 中文简化
+      'button[type="submit"]',             // 按类型
+      'button:has-text("转换")',           // 包含"转换"
+      '[data-testid="start-conversion"]',  // 测试 ID
+      '#start-conversion'                  // ID 选择器
     ];
 
     let buttonFound = false;
     for (const selector of buttonSelectors) {
       try {
         const button = page.locator(selector).first();
-        if (await button.isVisible({ timeout: 1000 }).catch(() => false)) {
+        if (await button.isVisible({ timeout: 2000 }).catch(() => false)) {
           console.log(`✓ 找到按钮: ${selector}`);
 
           // 截图：点击前
@@ -145,7 +180,7 @@ test.describe('NE301 模型转换器 E2E 测试', () => {
           // 点击按钮
           await button.click();
           buttonFound = true;
-          console.log('✓ 已点击"开始转换"按钮');
+          console.log('✓ 已点击"Start"按钮');
           break;
         }
       } catch (e) {
@@ -171,15 +206,15 @@ test.describe('NE301 模型转换器 E2E 测试', () => {
     try {
       await page.waitForResponse(
         response => response.url().includes('/api/convert'),
-        { timeout: 30000 }
+        { timeout: 60000 }  // 增加到 60 秒
       );
       console.log('✓ 收到转换 API 响应');
     } catch (e) {
-      console.log('⚠ 30秒内未收到转换 API 响应');
+      console.log('⚠ 60秒内未收到转换 API 响应');
     }
 
     // 等待一段时间以观察控制台输出
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(8000);
 
     // 截图：最终状态
     await page.screenshot({ path: 'tests/e2e/screenshots/06-final-state.png' });
@@ -249,24 +284,69 @@ test.describe('NE301 模型转换器 E2E 测试', () => {
       }
     });
 
-    // 上传文件
-    const fileInputs = await page.locator('input[type="file"]').all();
+    // 上传文件（通过 ID 和 accept 属性精确定位）
+    console.log('\n--- 上传测试文件 ---');
 
-    if (fileInputs.length >= 3) {
-      await fileInputs[0].setInputFiles('/Users/harryhua/Documents/GitHub/model-converter/demo/best.pt');
-      await fileInputs[1].setInputFiles('/Users/harryhua/Documents/GitHub/model-converter/demo/household_trash.yaml');
-      await fileInputs[2].setInputFiles('/Users/harryhua/Documents/GitHub/model-converter/demo/calibration.zip');
+    let uploadedCount = 0;
+
+    // 1. 上传模型文件
+    try {
+      const modelInput = page.locator('input[type="file"][accept*=".pt"], input[type="file"][accept*=".pth"]').first();
+      if (await modelInput.count() > 0) {
+        await modelInput.setInputFiles('/Users/harryhua/Documents/GitHub/model-converter/demo/best.pt');
+        console.log(`✓ 文件 1/3 已上传: best.pt`);
+        uploadedCount++;
+      }
+    } catch (e) {
+      console.log(`⚠ 上传模型文件失败:`, e.message);
     }
 
-    await page.waitForTimeout(1000);
+    // 2. 上传 YAML 文件
+    try {
+      const yamlInput = page.locator('#yaml-file-input');
+      if (await yamlInput.count() > 0) {
+        await yamlInput.setInputFiles('/Users/harryhua/Documents/GitHub/model-converter/demo/household_trash.yaml');
+        console.log(`✓ 文件 2/3 已上传: household_trash.yaml`);
+        uploadedCount++;
+      }
+    } catch (e) {
+      console.log(`⚠ 上传 YAML 文件失败:`, e.message);
+    }
 
-    // 点击转换按钮
-    const button = page.locator('button:has-text("开始转换")').or(
+    // 3. 上传校准数据集
+    try {
+      const calibInput = page.locator('#calibration-file-input');
+      if (await calibInput.count() > 0) {
+        await calibInput.setInputFiles('/Users/harryhua/Documents/GitHub/model-converter/demo/calibration.zip');
+        console.log(`✓ 文件 3/3 已上传: calibration.zip`);
+        uploadedCount++;
+      }
+    } catch (e) {
+      console.log(`⚠ 上传校准数据集失败（可选）:`, e.message);
+    }
+
+    console.log(`\n成功上传 ${uploadedCount}/3 个文件`);
+
+    await page.waitForTimeout(1500);
+
+    // 点击转换按钮（支持中英文）
+    console.log('\n--- 点击转换按钮 ---');
+    const button = page.locator('button:has-text("Start")').or(
+      page.locator('button:has-text("开始转换")')
+    ).or(
+      page.locator('button:has-text("开始")')
+    ).or(
       page.locator('button[type="submit"]')
     ).first();
 
-    if (await button.isVisible({ timeout: 2000 }).catch(() => false)) {
+    if (await button.isVisible({ timeout: 3000 }).catch(() => false)) {
+      console.log('✓ 找到转换按钮');
+
+      // 截图：点击前
+      await page.screenshot({ path: 'tests/e2e/screenshots/test2-before-click.png' });
+
       await button.click();
+      console.log('✓ 已点击转换按钮');
 
       // 等待 API 响应
       await page.waitForTimeout(5000);

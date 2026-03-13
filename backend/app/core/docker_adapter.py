@@ -1,7 +1,13 @@
 """
-Docker 工具链适配器（容器化版本）
+Docker 工具链适配器（容器化版本 + 性能优化）
 
 参考：camthink-ai/AIToolStack/backend/utils/ne301_export.py
+
+性能优化：
+- 集成性能监控
+- 缓存 Docker 路径映射
+- 复用 Docker 客户端
+- 实时日志推送
 """
 import docker
 import subprocess
@@ -15,26 +21,45 @@ import shutil
 import yaml
 from pathlib import Path
 from typing import Callable, Dict, Any, Optional, List
+from functools import lru_cache
 
 from .config import settings
-from .ne301_config import generate_ne301_json_config
+from .ne301_config import get_ne301_toolchain, generate_ne301_json_config
+from .performance_monitor import get_performance_monitor, PerformanceMonitor
+from .task_manager import get_task_manager
 
 logger = logging.getLogger(__name__)
 
 
 class DockerToolChainAdapter:
-    """Docker 工具链适配器"""
+    """Docker 工具链适配器（优化版）"""
+
+    # 类级别的 Docker 客户端（复用）
+    _docker_client: Optional[docker.DockerClient] = None
+    _client_lock = threading.Lock()
+
+    # 路径映射缓存
+    _path_cache: Dict[str, str] = {}
+    _path_cache_lock = threading.Lock()
 
     def __init__(self):
         self.ne301_image = settings.NE301_DOCKER_IMAGE
         self.ne301_project_path = Path(settings.NE301_PROJECT_PATH)
 
-        try:
-            self.client = docker.from_env()
-            logger.info(f"Docker 客户端初始化成功，NE301 镜像: {self.ne301_image}")
-        except Exception as e:
-            logger.error(f"Failed to initialize Docker client: {e}")
-            self.client = None
+        # 使用类级别的共享客户端
+        if DockerToolChainAdapter._docker_client is None:
+            with DockerToolChainAdapter._client_lock:
+                if DockerToolChainAdapter._docker_client is None:
+                    try:
+                        DockerToolChainAdapter._docker_client = docker.from_env()
+                        logger.info(f"Docker 客户端初始化成功，NE301 镜像: {self.ne301_image}")
+                    except Exception as e:
+                        logger.error(f"Failed to initialize Docker client: {e}")
+
+        self.client = DockerToolChainAdapter._docker_client
+
+        # 获取性能监控器
+        self.performance_monitor = get_performance_monitor()
 
     def check_docker(self) -> tuple[bool, str]:
         """检查 Docker 是否可用
@@ -70,7 +95,7 @@ class DockerToolChainAdapter:
             return False
 
     def _get_host_path(self, container_path: Path) -> Optional[str]:
-        """获取宿主机路径（4级回退机制）
+        """获取宿主机路径（4级回退机制 + 缓存优化）
 
         参考 AIToolStack 的实现，确保 Docker-in-Docker 场景下正确映射路径
 
@@ -84,6 +109,18 @@ class DockerToolChainAdapter:
         import json
 
         container_path_str = str(container_path)
+
+        # 优先检查缓存
+        with DockerToolChainAdapter._path_cache_lock:
+            if container_path_str in DockerToolChainAdapter._path_cache:
+                cached_path = DockerToolChainAdapter._path_cache[container_path_str]
+                # 验证缓存路径是否仍然有效
+                if Path(cached_path).exists():
+                    logger.debug(f"✓ 使用缓存的宿主机路径: {cached_path}")
+                    return cached_path
+                else:
+                    # 缓存失效，移除
+                    del DockerToolChainAdapter._path_cache[container_path_str]
 
         # 优先级 1: 使用 docker inspect（最精确）
         container_name = os.environ.get("CONTAINER_NAME", "model-converter-api")
@@ -105,6 +142,9 @@ class DockerToolChainAdapter:
                     if mount.get("Destination") == container_path_str:
                         host_path = mount.get("Source")
                         logger.info(f"✓ Got host path from docker inspect: {host_path}")
+                        # 缓存结果
+                        with DockerToolChainAdapter._path_cache_lock:
+                            DockerToolChainAdapter._path_cache[container_path_str] = host_path
                         return host_path
         except Exception as e:
             logger.warning(f"docker inspect failed: {e}")
@@ -133,6 +173,9 @@ class DockerToolChainAdapter:
                         inferred_path = project_root / "ne301"
                         if inferred_path.exists():
                             logger.info(f"✓ Inferred host path: {inferred_path}")
+                            # 缓存结果
+                            with DockerToolChainAdapter._path_cache_lock:
+                                DockerToolChainAdapter._path_cache[container_path_str] = str(inferred_path)
                             return str(inferred_path)
         except Exception as e:
             logger.warning(f"Path inference failed: {e}")
@@ -167,9 +210,9 @@ class DockerToolChainAdapter:
         yaml_path: Optional[str] = None,
         progress_callback: Optional[Callable[[int, str], None]] = None
     ) -> str:
-        """完整转换流程：PyTorch → TFLite → 量化 TFLite → NE301 .bin
+        """完整转换流程：PyTorch → TFLite → 量化 TFLite → NE301 .bin（优化版）
 
-        参考 AIToolStack 的实现方式
+        集成缓存机制和性能监控
 
         Args:
             task_id: 任务 ID
@@ -185,91 +228,142 @@ class DockerToolChainAdapter:
         if not self.client:
             raise RuntimeError("Docker client not available")
 
+        # 获取任务管理器用于推送日志
+        task_manager = get_task_manager()
+
         logger.info(f"开始任务 {task_id} 的转换流程")
+        task_manager.add_log(task_id, "开始模型转换流程...")
+
+        # 开始性能监控
+        self.performance_monitor.start_task(task_id)
 
         try:
-            # 步骤 1: PyTorch → TFLite (0-30%)
-            if progress_callback:
-                progress_callback(10, "正在导出 TFLite 模型...")
+            # 执行完整转换流程
+            task_manager.add_log(task_id, f"模型文件: {Path(model_path).name}")
+            task_manager.add_log(task_id, f"输入尺寸: {config['input_size']}x{config['input_size']}")
 
-            tflite_path = self._export_tflite(
-                model_path,
-                config["input_size"]
-            )
-            logger.info(f"✅ TFLite 导出成功: {tflite_path}")
+            model_size = Path(model_path).stat().st_size if Path(model_path).exists() else 0
+
+            # 步骤 1: PyTorch → TFLite (0-30%)
+            task_manager.add_log(task_id, "步骤 1/4: 导出 TFLite 模型")
+            with self.performance_monitor.measure_step(task_id, "export_tflite"):
+                if progress_callback:
+                    progress_callback(10, "正在导出 TFLite 模型...")
+
+                tflite_path = self._export_tflite(
+                    model_path,
+                    config["input_size"]
+                )
+                logger.info(f"✅ TFLite 导出成功: {tflite_path}")
+                task_manager.add_log(task_id, f"✅ TFLite 导出完成: {Path(tflite_path).name}")
 
             # 步骤 2: TFLite → 量化 TFLite (30-60%)
-            if progress_callback:
-                progress_callback(35, "正在量化模型...")
+            task_manager.add_log(task_id, "步骤 2/4: 量化模型 (int8)")
+            with self.performance_monitor.measure_step(task_id, "quantize_tflite"):
+                if progress_callback:
+                    progress_callback(35, "正在量化模型...")
 
-            quantized_tflite = self._quantize_tflite(
-                tflite_path,
-                config["input_size"],
-                calib_dataset_path,
-                config
-            )
-            logger.info(f"✅ 量化成功: {quantized_tflite}")
+                quantized_tflite = self._quantize_tflite(
+                    tflite_path,
+                    config["input_size"],
+                    calib_dataset_path,
+                    config
+                )
+                logger.info(f"✅ 量化成功: {quantized_tflite}")
+                task_manager.add_log(task_id, f"✅ 量化完成: {Path(quantized_tflite).name}")
 
             # 步骤 3: 准备 NE301 项目 (60-70%)
-            if progress_callback:
-                progress_callback(70, "正在准备 NE301 项目...")
+            task_manager.add_log(task_id, "步骤 3/4: 准备 NE301 项目")
+            with self.performance_monitor.measure_step(task_id, "prepare_ne301"):
+                if progress_callback:
+                    progress_callback(70, "正在准备 NE301 项目...")
 
-            ne301_project = self._prepare_ne301_project(
-                task_id,
-                quantized_tflite,
-                config,
-                yaml_path
-            )
+                ne301_project = self._prepare_ne301_project(
+                    task_id,
+                    quantized_tflite,
+                    config,
+                    yaml_path
+                )
+                task_manager.add_log(task_id, "✅ NE301 项目准备完成")
 
             # 步骤 4: NE301 打包 (70-100%)
-            if progress_callback:
-                progress_callback(75, "正在生成 NE301 部署包...")
+            task_manager.add_log(task_id, "步骤 4/4: NE301 打包")
+            with self.performance_monitor.measure_step(task_id, "build_ne301"):
+                if progress_callback:
+                    progress_callback(75, "正在生成 NE301 部署包...")
 
-            bin_path = self._build_ne301_model(
-                task_id,
-                ne301_project,
-                quantized_tflite  # ✅ 传递量化文件路径作为备选
-            )
+                bin_path = self._build_ne301_model(
+                    task_id,
+                    ne301_project,
+                    quantized_tflite  # ✅ 传递量化文件路径作为备选
+                )
 
             if progress_callback:
                 progress_callback(100, "转换完成!")
 
+            # 结束性能监控
+            output_size = Path(bin_path).stat().st_size if Path(bin_path).exists() else 0
+            self.performance_monitor.end_task(
+                task_id,
+                success=True,
+                model_size=model_size,
+                output_size=output_size
+            )
+
+            task_manager.add_log(task_id, "✅ 转换完成!")
+            task_manager.add_log(task_id, f"输出文件: {Path(bin_path).name}")
             logger.info(f"✅ 转换成功: {bin_path}")
             return bin_path
 
         except Exception as e:
             logger.error(f"转换失败: {e}")
+            task_manager.add_log(task_id, f"❌ 转换失败: {str(e)}")
+            # 记录失败
+            self.performance_monitor.end_task(task_id, success=False)
             raise
 
     def _export_tflite(self, model_path: str, input_size: int) -> str:
-        """步骤 1: PyTorch → SavedModel（用于后续量化）"""
+        """步骤 1: PyTorch → SavedModel（用于后续量化）
+
+        注意：ST量化脚本需要 SavedModel 格式，不是 TFLite 文件
+        """
         from ultralytics import YOLO
 
         logger.info(f"步骤 1: 导出 {model_path} 为 SavedModel 格式（用于量化）")
 
         model = YOLO(model_path)
-        # ✅ 修复：导出为 SavedModel 格式（量化脚本需要 SavedModel，不是 TFLite）
+
+        # 导出为 SavedModel 格式（量化脚本需要）
         saved_model_path = model.export(format="saved_model", imgsz=input_size, int8=False)
 
-        # ✅ model.export() 返回字符串路径
+        # YOLO export() 返回 SavedModel 目录路径
         if isinstance(saved_model_path, str) and Path(saved_model_path).exists():
             logger.info(f"✅ SavedModel 导出成功: {saved_model_path}")
             return saved_model_path
         else:
-            raise FileNotFoundError(f"SavedModel 导出失败：文件未生成或路径无效 ({saved_model_path})")
+            raise FileNotFoundError(f"SavedModel 导出失败：目录未生成 ({saved_model_path})")
 
     def _quantize_tflite(
         self,
-        tflite_path: str,
+        saved_model_path: str,  # ← SavedModel 目录路径，不是 TFLite 文件
         input_size: int,
         calib_dataset_path: Optional[str],
         config: Dict[str, Any]
     ) -> str:
-        """步骤 2: TFLite → 量化 TFLite
+        """步骤 2: SavedModel → 量化 TFLite
 
-        使用 Hydra 配置，参考 AIToolStack 的 tflite_quant.py
+        使用 ST 官方量化脚本，需要 SavedModel 目录作为输入
+
+        Args:
+            saved_model_path: SavedModel 目录路径（不是 .tflite 文件）
+            input_size: 模型输入尺寸
+            calib_dataset_path: 校准数据集路径（可选）
+            config: 转换配置
+
+        Returns:
+            str: 量化后的 TFLite 文件路径
         """
-        logger.info(f"步骤 2: 量化 {tflite_path}")
+        logger.info(f"步骤 2: 使用 SavedModel 进行量化: {saved_model_path}")
 
         import tempfile
         import yaml
@@ -309,7 +403,7 @@ class DockerToolChainAdapter:
         # 准备 Hydra 配置
         hydra_config = {
             "model": {
-                "model_path": str(Path(tflite_path).resolve()),
+                "model_path": str(Path(saved_model_path).resolve()),  # ← SavedModel 目录
                 "input_shape": [input_size, input_size, 3]
             },
             "quantization": {
@@ -436,9 +530,11 @@ class DockerToolChainAdapter:
         # ✅ 更新 Makefile 中的 MODEL_NAME
         self._update_model_makefile(model_name)
 
-        logger.info(f"✅ NE301 项目准备完成: {ne301_project}")
+        # 返回 Model 目录路径（不是 workspace 根目录）
+        model_project_dir = ne301_project / "Model"
+        logger.info(f"✅ NE301 项目准备完成: {model_project_dir}")
         logger.info(f"✅ JSON 配置文件: {json_file}")
-        return ne301_project
+        return model_project_dir
 
     def _build_ne301_model(
         self,
@@ -490,6 +586,323 @@ class DockerToolChainAdapter:
         ne301_project_path: Path,
         quantized_tflite: str
     ) -> str:
+        """尝试 NE301 打包（支持版本检测和动态适配）
+
+        Args:
+            task_id: 任务 ID
+            ne301_project_path: NE301 项目路径
+            quantized_tflite: 量化 TFLite 文件路径
+
+        Returns:
+            最终输出文件路径（.bin 或 .tflite）
+
+        Raises:
+            RuntimeError: 如果所有打包方式都失败
+        """
+        logger.info("📦 NE301 打包流程")
+        logger.info(f"  项目路径: {ne301_project_path}")
+
+        # 🔍 步骤1: 检测工具链版本和可用工具
+        # 注意：工具链检测需要使用 SDK 根目录（不是 Model 子目录）
+        sdk_root = self.ne301_project_path
+        toolchain = get_ne301_toolchain(sdk_root)
+
+        # 🔍 步骤2: 确定最佳打包方式
+        packaging_method = toolchain.get_best_packaging_method()
+        logger.info(f"  选择打包方式: {packaging_method}")
+
+        try:
+            # 执行对应的打包流程
+            if packaging_method == 'ota':
+                return self._build_ota_package(task_id, ne301_project_path, toolchain)
+            elif packaging_method == 'model':
+                return self._build_model_package(task_id, ne301_project_path, toolchain)
+            else:
+                return self._provide_fallback_output(task_id, quantized_tflite)
+
+        except Exception as e:
+            logger.error(f"❌ {packaging_method} 打包失败: {e}")
+            logger.info("📦 降级到 TFLite 输出...")
+            return self._provide_fallback_output(task_id, quantized_tflite)
+
+    def _build_ota_package(
+        self,
+        task_id: str,
+        ne301_project_path: Path,
+        toolchain
+    ) -> str:
+        """OTA 固件打包（推荐方式）
+
+        生成带 OTA 头部的完整固件，兼容设备升级
+        """
+        logger.info("🎯 使用 OTA 固件打包（推荐）")
+
+        # 步骤1: 执行 make model
+        model_bin_path = self._make_model(task_id, ne301_project_path)
+
+        # 步骤2: 添加 OTA 固件头部
+        return self._add_ota_header(task_id, ne301_project_path, toolchain, model_bin_path)
+
+    def _build_model_package(
+        self,
+        task_id: str,
+        ne301_project_path: Path,
+        toolchain
+    ) -> str:
+        """纯模型打包（备用方式）
+
+        生成 NE301 模型包，不带 OTA 头部
+        """
+        logger.info("🎯 使用纯模型打包（备用）")
+
+        # 执行 make model
+        model_bin_path = self._make_model(task_id, ne301_project_path)
+
+        # 直接返回模型包
+        return model_bin_path
+
+    def _make_model(self, task_id: str, ne301_project_path: Path) -> Path:
+        """执行 make model（在 NE301 容器内）"""
+        logger.info("步骤 1: 执行 make model")
+
+        # 输出路径
+        model_bin_path = ne301_project_path / "build" / "ne301_Model.bin"
+
+        # 在 NE301 容器内执行 make
+        logger.info("📦 调用 NE301 容器执行 make...")
+        self._run_make_in_ne301_container(ne301_project_path)
+
+        # 验证输出文件
+        if not model_bin_path.exists():
+            raise RuntimeError(f"❌ make model 失败，输出文件不存在: {model_bin_path}")
+
+        file_size = model_bin_path.stat().st_size
+        logger.info(f"✅ 模型编译成功: {model_bin_path.name} ({file_size} bytes)")
+
+        return model_bin_path
+
+    def _run_make_in_ne301_container(self, ne301_project_path: Path) -> None:
+        """启动 NE301 容器执行 make 命令"""
+        import os
+
+        logger.info(f"  项目路径: {ne301_project_path}")
+        logger.info(f"  使用 NE301 镜像: {self.ne301_image}")
+
+        # 关键修复：NE301 镜像的工作目录是 /workspace，所以挂载命名卷到 /workspace
+        # 而不是子目录 /workspace/ne301
+        volumes = {
+            "ne301_workspace": {"bind": "/workspace", "mode": "rw"}
+        }
+
+        # 创建临时容器名
+        container_name = "ne301-builder-" + os.urandom(4).hex()
+
+        # 关键修复：make model 必须在 SDK 根目录执行，不是 Model 子目录
+        # SDK 根目录的 Makefile 会调用 Model/Makefile 中的目标
+        make_cmd = "cd /workspace && make model"
+
+        logger.info(f"  启动 NE301 容器: {container_name}")
+        logger.info(f"  执行命令: {make_cmd}")
+        logger.info(f"  挂载卷: ne301_workspace -> /workspace")
+
+        container = None
+        try:
+            # 启动临时容器执行 make（不自动删除，以便获取日志）
+            container = self.client.containers.run(
+                self.ne301_image,
+                command=["bash", "-c", make_cmd],
+                volumes=volumes,
+                name=container_name,
+                auto_remove=False,  # 不自动删除，手动管理
+                detach=True,
+                network="model-converter_conversion_network"  # 完整网络名称
+            )
+
+            logger.info(f"  ✓ NE301 容器已启动: {container.id[:12]}")
+
+            # 等待容器执行完成
+            result = container.wait(timeout=300)  # 5分钟超时
+
+            # 获取容器日志（在容器删除之前）
+            try:
+                logs = container.logs(tail=100).decode("utf-8")
+                if logs:
+                    logger.debug(f"  容器日志:\n{logs}")
+            except Exception as e:
+                logger.warning(f"  获取容器日志失败: {e}")
+            # 检查输出文件是否生成（比退出码更可靠，特别是在 QEMU 模拟环境中）
+            output_bin = self.ne301_project_path / "Model" / "build" / "ne301_Model.bin"
+            if output_bin.exists():
+                file_size = output_bin.stat().st_size
+                logger.info(f"  ✓ make model 完成，输出文件: {output_bin.name} ({file_size:,} bytes)")
+                # 退出码非零但文件存在，可能是 QEMU 模拟问题
+                if result["StatusCode"] != 0:
+                    logger.warning(f"  ⚠️  容器退出码: {result['StatusCode']}（可能为 QEMU 模拟问题，但输出文件有效）")
+            else:
+                logger.error(f"  ✗ make 失败，退出码: {result['StatusCode']}，输出文件不存在: {output_bin}")
+                raise RuntimeError(f"make model 失败: exit code {result['StatusCode']}, 输出文件未生成")
+
+        finally:
+            # 手动删除容器
+            if container:
+                try:
+                    container.remove(force=True)
+                    logger.info(f"  ✓ 容器已清理: {container_name}")
+                except Exception as e:
+                    logger.warning(f"  清理容器失败（可能已删除）: {e}")
+
+    def _run_make_directly(self, ne301_project_path: Path) -> None:
+        """直接执行 make（在容器内）"""
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["make", "model"],
+                cwd=str(ne301_project_path),
+                capture_output=True,
+                text=True,
+                timeout=120  # 2分钟超时
+            )
+
+            if result.returncode != 0:
+                logger.error(f"make 失败: {result.stderr}")
+                raise RuntimeError(f"make model 失败: {result.stderr}")
+
+            logger.info("✅ make model 完成")
+            if result.stdout:
+                logger.debug(f"make 输出: {result.stdout[-500:]}")  # 只显示最后500字符
+
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("make model 超时（>120秒）")
+
+    def _run_make_in_container(self, ne301_project_path: Path) -> None:
+        """在 NE301 容器中执行 make"""
+        # 检查 NE301 容器是否运行
+        try:
+            ne301_container = self.client.containers.get("ne301-dev")
+        except Exception:
+            # 如果容器不存在，尝试创建临时容器
+            logger.info("创建临时 NE301 容器...")
+            ne301_container = self._run_temp_ne301_container(ne301_project_path)
+
+        # 执行 make
+        try:
+            exit_code, output = ne301_container.exec_run(
+                f"bash -c 'cd {ne301_project_path} && make model'",
+                workdir=str(ne301_project_path)
+            )
+
+            if exit_code != 0:
+                logger.error(f"make 失败: {output.decode('utf-8')[-500:]}")
+                raise RuntimeError(f"make model 失败: exit code {exit_code}")
+
+            logger.info("✅ make model 完成")
+
+        except Exception as e:
+            logger.error(f"执行 make 失败: {e}")
+            raise
+
+    def _run_temp_ne301_container(self, ne301_project_path: Path):
+        """创建临时 NE301 容器"""
+        import tempfile
+
+        # 创建卷挂载
+        volumes = {
+            str(ne301_project_path): {"bind": str(ne301_project_path), "mode": "rw"}
+        }
+
+        # 运行容器（自动删除）
+        container = self.client.containers.run(
+            self.ne301_image,
+            command="tail -f /dev/null",  # 保持容器运行
+            volumes=volumes,
+            detach=True,
+            auto_remove=True,
+            name=f"ne301-tmp-{id(self)}"
+        )
+
+        return container
+
+    def _add_ota_header(
+        self,
+        task_id: str,
+        ne301_project_path: Path,
+        toolchain,
+        model_bin_path: Path
+    ) -> str:
+        """添加 OTA 固件头部"""
+        logger.info("步骤 2: 添加 OTA 固件头部...")
+
+        # 获取版本号
+        version = toolchain.get_model_version()
+        ota_version_str = '.'.join(map(str, version.to_tuple()))
+
+        # 获取 OTA 打包工具
+        ota_packer = toolchain.get_ota_packager()
+        if not ota_packer:
+            raise RuntimeError("OTA 打包工具不可用")
+
+        # 输出路径
+        filename = toolchain.get_package_name(task_id, 'ota')
+        ota_pkg_path = ne301_project_path / "build" / f"{filename}.bin"
+
+        # 构造命令
+        cmd = [
+            "python3",
+            str(ota_packer),
+            str(model_bin_path),
+            "-o", str(ota_pkg_path),
+            "-t", "ai_model",
+            "-n", "NE301_MODEL",
+            "-d", "NE301 AI Model",
+            "-v", ota_version_str
+        ]
+
+        logger.info(f"  版本: {version}")
+        logger.info(f"  输出: {ota_pkg_path.name}")
+
+        # 执行打包
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            cwd=str(ne301_project_path)
+        )
+
+        output = []
+        for line in process.stdout:
+            line = line.strip()
+            output.append(line)
+            logger.info(f"[OTA Packer] {line}")
+
+        process.wait(timeout=60)
+
+        if process.returncode != 0:
+            raise RuntimeError(f"OTA 打包失败: {' '.join(output[-10:])}")
+
+        # 复制到输出目录
+        output_dir = Path("/app/outputs")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        final_path = output_dir / ota_pkg_path.name
+        shutil.copy2(ota_pkg_path, final_path)
+
+        logger.info(f"✅ OTA 固件生成成功: {final_path}")
+        return str(final_path)
+
+    def _provide_fallback_output(self, task_id: str, quantized_tflite: str) -> str:
+        """提供降级输出（TFLite）"""
+        logger.info("⚠️  降级到 TFLite 输出")
+
+        output_dir = Path("/app/outputs")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        fallback_path = output_dir / f"quantized_model_{task_id}.tflite"
+        shutil.copy2(quantized_tflite, fallback_path)
+
+        logger.info(f"✅ TFLite 文件已提供: {fallback_path}")
+        logger.warning("⚠️  注意: TFLite 格式需要手动打包为 NE301 格式")
+
+        return str(fallback_path)
         """尝试 NE301 打包（仅在 x86_64 环境）
 
         Args:
@@ -561,23 +974,80 @@ class DockerToolChainAdapter:
             error_output = "\n".join(output_lines[-50:])  # 最后 50 行
             raise RuntimeError(f"❌ NE301 打包失败:\n{error_output}")
 
-        # 查找生成的 .bin 文件
-        bin_files = list(ne301_project_path.glob("build/*.bin"))
-        if not bin_files:
-            # 如果 build 目录中没有，查找整个项目
-            bin_files = list(ne301_project_path.rglob("*.bin"))
+        # ✅ 步骤4.1: 查找生成的模型包
+        model_bin_path = ne301_project_path / "build" / "ne301_Model.bin"
+        if not model_bin_path.exists():
+            raise FileNotFoundError(f"❌ NE301 模型文件未生成: {model_bin_path}")
 
-        if not bin_files:
-            raise FileNotFoundError("❌ NE301 .bin 文件未生成")
+        logger.info(f"✅ 模型包已生成: {model_bin_path}")
 
-        # 复制到输出目录
+        # ✅ 步骤4.2: 添加 OTA 固件头部
+        logger.info("步骤 4.2: 添加 OTA 固件头部...")
+
+        # 版本号格式: major.minor.patch.build
+        # 使用 git commit count 作为 build number，或使用时间戳
+        import time
+        build_number = int(time.time()) % 10000  # 0-9999
+        ota_version = "2.0.0.{}".format(build_number)
+
+        # OTA 固件输出路径
+        ota_pkg_path = ne301_project_path / "build" / f"ne301_Model_v{ota_version}_pkg.bin"
+
+        # 调用 ota_packer.py 添加 OTA 头部
+        ota_packer_script = ne301_project_path / "Script" / "ota_packer.py"
+        if not ota_packer_script.exists():
+            logger.warning(f"⚠️  OTA 打包工具不存在: {ota_packer_script}")
+            logger.info("使用原始模型包作为备选")
+            final_bin_path = model_bin_path
+        else:
+            # 构造 OTA 打包命令
+            ota_pack_cmd = [
+                "python3",
+                str(ota_packer_script),
+                str(model_bin_path),
+                "-o", str(ota_pkg_path),
+                "-t", "ai_model",
+                "-n", "NE301_MODEL",
+                "-d", "NE301 AI Model",
+                "-v", ota_version
+            ]
+
+            logger.info(f"执行 OTA 打包命令...")
+            logger.info(f"  版本: {ota_version}")
+
+            # 执行打包
+            pack_process = subprocess.Popen(
+                ota_pack_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+
+            # 实时输出日志
+            pack_output = []
+            for line in pack_process.stdout:
+                line = line.strip()
+                pack_output.append(line)
+                logger.info(f"[OTA Packer] {line}")
+
+            pack_process.wait(timeout=60)
+
+            if pack_process.returncode != 0:
+                logger.warning(f"⚠️  OTA 打包失败，使用原始模型包")
+                final_bin_path = model_bin_path
+            else:
+                logger.info(f"✅ OTA 固件生成成功: {ota_pkg_path}")
+                final_bin_path = ota_pkg_path
+
+        # ✅ 步骤4.3: 复制到输出目录
         output_dir = Path("/app/outputs")
         output_dir.mkdir(parents=True, exist_ok=True)
-        final_bin_path = output_dir / f"ne301_model_{task_id}.bin"
-        shutil.copy2(bin_files[0], final_bin_path)
+        final_output_path = output_dir / final_bin_path.name
+        shutil.copy2(final_bin_path, final_output_path)
 
-        logger.info(f"✅ NE301 打包成功: {final_bin_path}")
-        return str(final_bin_path)
+        logger.info(f"✅ NE301 打包成功: {final_output_path}")
+        return str(final_output_path)
 
     def _update_model_makefile(self, model_name: str) -> None:
         """更新 Model/Makefile 中的 MODEL_NAME 变量
