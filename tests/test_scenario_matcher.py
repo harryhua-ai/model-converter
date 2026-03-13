@@ -26,3 +26,17 @@ def test_scenario_match_no_match():
 
     result = matcher.match("查看任务状态")
     assert result["scenario_id"] == "maintenance"  # 默认场景
+
+def test_scenario_priority():
+    """测试场景优先级排序（作为置信度相同时的决胜条件）"""
+    matcher = ScenarioMatcher()
+
+    # 测试场景：当多个场景有相同置信度时，选择优先级最高的
+    # '优化性能问题' 同时匹配 refactor (priority=3) 和 performance (priority=8)
+    # 两者都只匹配一个关键词，置信度相同，应选择 refactor（优先级数字更小）
+    result = matcher.match("优化性能问题")
+
+    # refactor 的关键词 '优化' 匹配，performance 的关键词 '性能' 也匹配
+    # 两者置信度相同，但 refactor 优先级更高 (3 < 8)
+    assert result["scenario_id"] == "refactor"
+    assert result["confidence"] > 0
