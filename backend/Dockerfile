@@ -1,3 +1,21 @@
+# 第一阶段：构建前端
+FROM node:20-slim AS frontend-builder
+
+WORKDIR /app/frontend
+
+# 复制前端依赖文件
+COPY frontend/package*.json ./
+
+# 安装依赖（使用 install 而非 ci，避免 lock file 同步问题）
+RUN npm install
+
+# 复制前端源代码
+COPY frontend/ ./
+
+# 构建前端
+RUN npm run build
+
+# 第二阶段：构建后端
 FROM python:3.10-slim
 
 WORKDIR /app
@@ -22,14 +40,17 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制依赖文件
-COPY requirements.txt .
+COPY backend/requirements.txt .
 
 # 安装 Python 依赖（包含 ML 库）
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制应用代码
-COPY app/ ./app/
-COPY tools/ ./tools/
+COPY backend/app/ ./app/
+COPY backend/tools/ ./tools/
+
+# 从前端构建阶段复制构建产物
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 # 复制初始化脚本
 COPY scripts/init-ne301.sh /usr/local/bin/init-ne301.sh

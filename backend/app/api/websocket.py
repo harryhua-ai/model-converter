@@ -24,23 +24,33 @@ class ConnectionManager:
 
     async def connect(self, websocket: WebSocket, task_id: str):
         """接受连接并订阅任务"""
-        await websocket.accept()
-        
+        # 注意：不要在这里调用 websocket.accept()，因为外层已经调用过了
+        # await websocket.accept()  # ❌ 移除这行，避免重复 accept
+
         if task_id not in self.active_connections:
             self.active_connections[task_id] = set()
-        
+
         self.active_connections[task_id].add(websocket)
+
+        # ✅ FIX: 同时注册到 TaskManager，使其能够广播进度消息
+        task_manager = get_task_manager()
+        task_manager.register_websocket(task_id, websocket)
+
         logger.info(f"WebSocket 连接已建立: task_id={task_id}")
 
     def disconnect(self, websocket: WebSocket, task_id: str):
         """断开连接"""
         if task_id in self.active_connections:
             self.active_connections[task_id].discard(websocket)
-            
+
             # 如果该任务没有连接了,清理字典
             if not self.active_connections[task_id]:
                 del self.active_connections[task_id]
-        
+
+        # ✅ FIX: 同时从 TaskManager 注销
+        task_manager = get_task_manager()
+        task_manager.unregister_websocket(task_id, websocket)
+
         logger.info(f"WebSocket 连接已断开: task_id={task_id}")
 
     async def send_personal_message(self, message: dict, websocket: WebSocket):
@@ -90,13 +100,20 @@ async def websocket_endpoint(websocket: WebSocket):
     }
     """
     task_id = None
-    
+
     try:
-        # 等待客户端发送订阅消息
+        # 第一步：接受 WebSocket 连接（建立握手）
+        await websocket.accept()
+        logger.info("WebSocket 连接已接受，等待客户端消息...")
+
+        # 第二步：等待客户端发送订阅消息
+        logger.info("等待客户端订阅消息...")
         data = await websocket.receive_json()
+        logger.info(f"收到客户端消息: {data}")
         action = data.get("action")
         task_id = data.get("task_id")
-        
+        logger.info(f"解析消息: action={action}, task_id={task_id}")
+
         if action == "subscribe" and task_id:
             # 订阅任务进度
             await manager.connect(websocket, task_id)

@@ -70,10 +70,15 @@ export async function uploadModel(
 
     return response.data;
   } catch (error) {
+    console.error('[API Error] 完整错误对象:', error);
     const apiError = error as AxiosError<ApiError>;
+    console.error('[API Error] 响应状态:', apiError.response?.status);
+    console.error('[API Error] 响应数据:', apiError.response?.data);
+    console.error('[API Error] 响应头:', apiError.response?.headers);
 
     // 格式化错误消息（处理数组和对象）
     const formatErrorMessage = (detail: any): string => {
+      console.error('[API Error] 格式化 detail:', detail);
       if (typeof detail === 'string') return detail;
       if (Array.isArray(detail)) {
         return detail.map((e: any) => e.msg || JSON.stringify(e)).join('; ');
@@ -112,7 +117,7 @@ export async function getTaskStatus(taskId: string): Promise<TaskStatusResponse>
  */
 export async function downloadModel(taskId: string): Promise<Blob> {
   try {
-    const response = await axios.get(`${API_BASE}/download/${taskId}`, {
+    const response = await axios.get(`${API_BASE}/tasks/${taskId}/download`, {
       responseType: 'blob',
     });
 

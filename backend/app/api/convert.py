@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import tempfile
+import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException, Form
@@ -52,8 +53,14 @@ async def convert_model(
     Returns:
         JSONResponse: 包含 task_id 的响应
     """
+    logger.info("=" * 60)
+    logger.info("🎯 收到转换请求！")
+    logger.info(f"📁 模型文件: {model_file.filename}")
+    logger.info("=" * 60)
+
     # 1. 验证模型文件
     if not _validate_file_extension(model_file.filename, ALLOWED_MODEL_EXTENSIONS):
+        logger.error("❌ 模型文件格式验证失败")
         raise HTTPException(
             status_code=400,
             detail=f"不支持的模型文件格式。允许的格式: {', '.join(ALLOWED_MODEL_EXTENSIONS)}"
@@ -175,14 +182,25 @@ async def convert_model(
             logger.info(f"校准数据集: {calibration_dataset.filename}")
 
         # 8. 启动后台转换任务
-        background_tasks.add_task(
-            _run_conversion,
-            task_id,
-            model_path,
-            validated_config,
-            yaml_path,
-            calibration_path
-        )
+        logger.info(f"[DEBUG] 准备启动后台任务: {task_id}")
+        logger.info(f"[DEBUG] _run_conversion 函数: {_run_conversion}")
+        logger.info(f"[DEBUG] background_tasks 对象: {background_tasks}")
+
+        try:
+            background_tasks.add_task(
+                _run_conversion,
+                task_id,
+                model_path,
+                validated_config,
+                yaml_path,
+                calibration_path
+            )
+            logger.info(f"[DEBUG] ✅ 后台任务已添加到队列: {task_id}")
+        except Exception as e:
+            logger.error(f"[DEBUG] ❌ 添加后台任务失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise
 
         return JSONResponse(
             status_code=202,
@@ -237,21 +255,27 @@ async def _run_conversion(
     task_manager = get_task_manager()
 
     try:
-        logger.info(f"开始任务 {task_id} 的真实转换流程")
+        logger.info(f"🚀 开始任务 {task_id} 的真实转换流程")
+        logger.info(f"📁 模型路径: {model_path}")
+        logger.info(f"⚙️  配置: {config.dict()}")
+        logger.info(f"📄 YAML 路径: {yaml_path}")
+        logger.info(f"📊 校准数据集: {calibration_path}")
 
         # 初始化转换器
+        logger.info(f"🔧 初始化转换器...")
         converter = ModelConverter()
 
         # 进度回调
         def progress_callback(progress: int, message: str):
+            logger.info(f"📈 [{progress}%] {message}")
             task_manager.update_progress(task_id, progress, message)
-            logger.info(f"[{progress}%] {message}")
 
         # 准备配置字典（从 Pydantic 模型）
         config_dict = config.dict()
         config_dict["task_id"] = task_id
 
         # 执行转换
+        logger.info(f"⏳ 开始执行转换...")
         output_path = converter.convert(
             model_path=model_path,
             config=config_dict,
@@ -260,11 +284,13 @@ async def _run_conversion(
         )
 
         # 标记任务完成
+        logger.info(f"✅ 任务 {task_id} 转换成功: {output_path}")
         task_manager.complete_task(task_id, output_path)
-        logger.info(f"✅ 任务 {task_id} 转换成功")
 
     except Exception as e:
         logger.error(f"❌ 任务 {task_id} 转换失败: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         task_manager.fail_task(task_id, str(e))
         raise
 

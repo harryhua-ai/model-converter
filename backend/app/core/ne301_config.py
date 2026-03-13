@@ -1,173 +1,331 @@
-"""NE301 配置生成工具（基于 AIToolStack）
-
-参考：camthink-ai/AIToolStack/backend/utils/ne301_export.py
-
-功能：
-- 从 TFLite 模型自动提取量化参数
-- 动态计算内存池大小
-- 生成完整的 NE301 JSON 配置
 """
-from pathlib import Path
-from typing import Optional, Tuple, List, Dict, Any
+NE301 工具链配置管理
+
+支持版本检测和动态适配，兼容 NE301 工具链的后续更新
+"""
+
+import os
+import re
+import json
 import logging
+from pathlib import Path
+from typing import Dict, Optional, Tuple, List
+from dataclasses import dataclass, field
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 
-def _convert_to_json_serializable(obj: Any) -> Any:
-    """递归转换 NumPy 类型为 Python 原生类型
+@dataclass
+class NE301Version:
+    """NE301 版本信息"""
+    major: int
+    minor: int
+    patch: int
+    build: int = 0
+    suffix: str = ""
 
-    处理 NumPy 的 scalar、ndarray 等类型，确保 JSON 序列化成功
+    def __str__(self) -> str:
+        base = f"{self.major}.{self.minor}.{self.patch}.{self.build}"
+        return f"{base}_{self.suffix}" if self.suffix else base
 
-    Args:
-        obj: 任意 Python 对象
+    @staticmethod
+    def parse(version_str: str) -> Optional['NE301Version']:
+        """从字符串解析版本号"""
+        # 支持格式: "2.0.0.0", "2.0.0", "2.0.0.0-alpha"
+        match = re.match(r'(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?(?:-([a-zA-Z0-9]+))?', version_str)
+        if match:
+            major, minor, patch, build, suffix = match.groups()
+            return NE301Version(
+                major=int(major),
+                minor=int(minor),
+                patch=int(patch),
+                build=int(build) if build else 0,
+                suffix=suffix or ""
+            )
+        return None
 
-    Returns:
-        JSON 可序列化的 Python 对象
-    """
-    import numpy as np
+    @staticmethod
+    def generate_timestamp_version() -> 'NE301Version':
+        """生成基于时间戳的版本号"""
+        # 格式: 2.0.0.BUILD (BUILD 是当天的秒数 % 10000)
+        import time
+        build = int(time.time()) % 10000
+        return NE301Version(major=2, minor=0, patch=0, build=build)
 
-    if isinstance(obj, dict):
-        return {key: _convert_to_json_serializable(value) for key, value in obj.items()}
-    elif isinstance(obj, (list, tuple)):
-        return [_convert_to_json_serializable(item) for item in obj]
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, np.integer):
+    def to_tuple(self) -> Tuple[int, int, int, int]:
+        """转换为元组"""
+        return (self.major, self.minor, self.patch, self.build)
+
+
+@dataclass
+class OTAConfig:
+    """OTA 打包配置"""
+    magic: int = 0x4F544155  # "OTAU"
+    header_version: int = 0x0100  # v1.0
+    header_size: int = 1024
+
+    # 固件类型映射
+    fw_type_map: Dict[str, int] = field(default_factory=lambda: {
+        'fsbl': 0x01,
+        'app': 0x02,
+        'web': 0x03,
+        'ai_model': 0x04,
+        'config': 0x05,
+        'patch': 0x06,
+        'full': 0x07,
+    })
+
+
+@dataclass
+class ModelPackagerConfig:
+    """模型打包配置"""
+    package_magic: int = 0x314D364E  # "N6M1"
+    package_version: int = 0x030000  # v3.0.0
+
+    # 工具路径（相对于 NE301 项目根目录）
+    ota_packer_script: str = "Script/ota_packer.py"
+    model_packager_script: str = "Script/model_packager.py"
+    version_header_script: str = "Script/version_header.py"
+
+    # Makefile 目标
+    model_make_target: str = "model"
+
+    # 版本配置
+    model_version_template: str = "{major}.{minor}.{patch}.{build}"
+    default_major_version: int = 2
+    default_minor_version: int = 0
+    default_patch_version: int = 0
+
+
+@dataclass
+class NE301Toolchain:
+    """NE301 工具链信息"""
+
+    project_root: Path
+    version: Optional[NE301Version] = None
+    config: ModelPackagerConfig = field(default_factory=ModelPackagerConfig)
+
+    # 检测到的工具和脚本
+    available_tools: Dict[str, bool] = field(default_factory=dict)
+    tool_versions: Dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self):
+        """初始化时检测工具链"""
+        self._detect_toolchain()
+
+    def _detect_toolchain(self) -> None:
+        """检测 NE301 工具链版本和可用工具"""
+        logger.info("🔍 检测 NE301 工具链...")
+
+        # 检测版本文件
+        version_mk = self.project_root / "version.mk"
+        if version_mk.exists():
+            self._parse_version_mk(version_mk)
+
+        # 检测可用的打包工具
+        self._detect_tools()
+
+        # 记录检测结果
+        self._log_detection_results()
+
+    def _parse_version_mk(self, version_mk_path: Path) -> None:
+        """解析 version.mk 文件"""
         try:
-            return int(obj.item())
-        except (ValueError, OverflowError, AttributeError):
-            return int(obj)
-    elif isinstance(obj, np.floating):
+            content = version_mk_path.read_text()
+
+            # 解析主版本号
+            major = self._extract_version_var(content, "VERSION_MAJOR", 2)
+            minor = self._extract_version_var(content, "VERSION_MINOR", 0)
+            patch = self._extract_version_var(content, "VERSION_PATCH", 0)
+            build = self._extract_version_var(content, "VERSION_BUILD", 0)
+
+            if major and minor and patch:
+                self.version = NE301Version(
+                    major=major,
+                    minor=minor,
+                    patch=patch,
+                    build=build or 0
+                )
+                logger.info(f"✓ 检测到 NE301 版本: {self.version}")
+
+        except Exception as e:
+            logger.warning(f"⚠️  无法解析版本文件: {e}")
+
+    def _extract_version_var(self, content: str, var_name: str, default: int) -> Optional[int]:
+        """从 Makefile 内容中提取版本变量"""
+        # 匹配: VERSION_MAJOR ?= 2 或 VERSION_MAJOR := 2
+        match = re.search(rf'{var_name}\s*:?=\s*(\d+)', content)
+        return int(match.group(1)) if match else None
+
+    def _detect_tools(self) -> None:
+        """检测可用的打包工具"""
+        tools_to_check = {
+            'ota_packer': self.project_root / self.config.ota_packer_script,
+            'model_packager': self.project_root / self.config.model_packager_script,
+            'version_header': self.project_root / self.config.version_header_script,
+        }
+
+        for tool_name, tool_path in tools_to_check.items():
+            exists = tool_path.exists()
+            self.available_tools[tool_name] = exists
+
+            if exists:
+                logger.info(f"✓ 找到工具: {tool_name}")
+
+                # 尝试获取工具版本
+                version = self._get_tool_version(tool_path)
+                if version:
+                    self.tool_versions[tool_name] = version
+                    logger.info(f"  版本: {version}")
+
+    def _get_tool_version(self, script_path: Path) -> Optional[str]:
+        """获取脚本的版本信息"""
         try:
-            return float(obj.item())
-        except (ValueError, OverflowError, AttributeError):
-            return float(obj)
-    elif isinstance(obj, np.bool_):
-        try:
-            return bool(obj.item())
-        except (ValueError, OverflowError, AttributeError):
-            return bool(obj)
-    else:
-        return obj
+            content = script_path.read_text()
+
+            # 查找版本号注释
+            # 例如: # Version: 1.0 或 VERSION = "1.0"
+            version_matches = [
+                re.search(r'#\s*Version:\s*([\d.]+)', content),
+                re.search(r'VE?RSION\s*=\s*["\']([\d.]+)["\']', content),
+            ]
+
+            for match in version_matches:
+                if match:
+                    return match.group(1)
+
+        except Exception:
+            pass
+
+        return None
+
+    def _log_detection_results(self) -> None:
+        """记录检测结果摘要"""
+        logger.info("=" * 50)
+        logger.info("NE301 工具链检测结果:")
+        logger.info(f"  项目路径: {self.project_root}")
+        logger.info(f"  版本: {self.version or '未知'}")
+        logger.info(f"  可用工具:")
+        for tool_name, available in self.available_tools.items():
+            status = "✓" if available else "✗"
+            version = f" ({self.tool_versions.get(tool_name)})" if tool_name in self.tool_versions else ""
+            logger.info(f"    {status} {tool_name}{version}")
+        logger.info("=" * 50)
+
+    def get_ota_packager(self) -> Optional[Path]:
+        """获取 OTA 打包工具路径"""
+        tool_name = 'ota_packer'
+        if self.available_tools.get(tool_name):
+            return self.project_root / self.config.ota_packer_script
+        return None
+
+    def get_model_packager(self) -> Optional[Path]:
+        """获取模型打包工具路径"""
+        tool_name = 'model_packager'
+        if self.available_tools.get(tool_name):
+            return self.project_root / self.config.model_packager_script
+        return None
+
+    def get_model_version(self) -> NE301Version:
+        """获取模型版本号"""
+        if self.version:
+            return self.version
+        return NE301Version.generate_timestamp_version()
+
+    def supports_ota_package(self) -> bool:
+        """检查是否支持 OTA 打包"""
+        return self.available_tools.get('ota_packer', False)
+
+    def supports_model_package(self) -> bool:
+        """检查是否支持模型打包"""
+        return self.available_tools.get('model_packager', False)
+
+    def get_best_packaging_method(self) -> str:
+        """
+        获取最佳的打包方式
+
+        Returns:
+            'ota': OTA 打包（推荐，兼容设备升级）
+            'model': 纯模型打包（备用）
+            'fallback': 降级到 TFLite
+        """
+        if self.supports_ota_package():
+            return 'ota'
+        elif self.supports_model_package():
+            return 'model'
+        else:
+            return 'fallback'
+
+    def get_package_name(self, task_id: str, packaging_method: str) -> str:
+        """
+        生成打包文件名
+
+        Args:
+            task_id: 任务 ID
+            packaging_method: 打包方式 ('ota', 'model', 'fallback')
+
+        Returns:
+            文件名（不含扩展名）
+        """
+        version = self.get_model_version()
+
+        if packaging_method == 'ota':
+            # OTA 固件: ne301_Model_v2.0.0.12345_pkg.bin
+            return f"ne301_Model_v{version}_pkg"
+        elif packaging_method == 'model':
+            # 模型包: ne301_Model_v2.0.0.12345.bin
+            return f"ne301_Model_v{version}"
+        else:
+            # 降级: quantized_model_taskId.tflite
+            return f"quantized_model_{task_id}"
+
+    def get_extension(self, packaging_method: str) -> str:
+        """获取文件扩展名"""
+        if packaging_method in ('ota', 'model'):
+            return '.bin'
+        else:
+            return '.tflite'
 
 
-def extract_tflite_quantization_params(
-    tflite_path: Path
-) -> Tuple[Optional[float], Optional[int], Optional[Tuple[int, int, int]]]:
-    """从 TFLite 模型自动提取量化参数
+class NE301ConfigManager:
+    """NE301 配置管理器（单例）"""
 
-    参考 AIToolStack 的实现，使用 TensorFlow Lite Interpreter 读取模型详情
+    _instance: Optional['NE301ConfigManager'] = None
+    _cache: Dict[Path, NE301Toolchain] = {}
 
-    Args:
-        tflite_path: TFLite 模型文件路径
+    @classmethod
+    def get_toolchain(cls, ne301_project_path: Path) -> NE301Toolchain:
+        """
+        获取 NE301 工具链实例（带缓存）
 
-    Returns:
-        (output_scale, output_zero_point, output_shape)
-        失败时返回 (None, None, None)
-    """
-    try:
-        import tensorflow as tf
+        Args:
+            ne301_project_path: NE301 项目路径
 
-        logger.info(f"正在从 TFLite 模型提取量化参数: {tflite_path}")
+        Returns:
+            NE301Toolchain 实例
+        """
+        # 规范化路径
+        ne301_project_path = ne301_project_path.resolve()
 
-        interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
-        interpreter.allocate_tensors()
+        # 检查缓存
+        if ne301_project_path in cls._cache:
+            return cls._cache[ne301_project_path]
 
-        output_details = interpreter.get_output_details()[0]
-        quant_params = output_details['quantization_parameters']
+        # 创建新实例
+        toolchain = NE301Toolchain(project_root=ne301_project_path)
+        cls._cache[ne301_project_path] = toolchain
+        return toolchain
 
-        # 提取 scale 和 zero_point
-        scales = quant_params['scales']
-        zero_points = quant_params['zero_points']
-
-        output_scale = None
-        output_zero_point = None
-
-        if len(scales) > 0 and len(zero_points) > 0:
-            output_scale = _convert_to_json_serializable(scales[0])
-            output_zero_point = _convert_to_json_serializable(zero_points[0])
-            logger.info(f"✅ 提取量化参数: scale={output_scale}, zero_point={output_zero_point}")
-
-        # 提取 output_shape
-        output_shape = tuple(_convert_to_json_serializable(output_details['shape']))
-        logger.info(f"✅ 提取输出形状: {output_shape}")
-
-        return output_scale, output_zero_point, output_shape
-
-    except Exception as e:
-        logger.error(f"❌ 提取量化参数失败: {e}")
-        return None, None, None
+    @classmethod
+    def clear_cache(cls):
+        """清除缓存"""
+        cls._cache.clear()
 
 
-def calculate_total_boxes(input_size: int) -> int:
-    """根据输入尺寸计算 YOLOv8 输出框数量
-
-    YOLOv8 使用 3 个检测头，stride 分别为 8、16、32
-    total_boxes = 3 * (H/8 * W/8 + H/16 * W/16 + H/32 * W/32)
-
-    参考 AIToolStack 的精确计算公式
-
-    Args:
-        input_size: 输入尺寸（正方形）
-
-    Returns:
-        总输出框数量
-    """
-    if input_size == 256:
-        return 1344
-    elif input_size == 320:
-        return 2100
-    elif input_size == 416:
-        return 3549
-    elif input_size == 480:
-        return 4725
-    elif input_size == 640:
-        return 8400
-    else:
-        # 通用公式
-        scale = input_size // 8
-        return 3 * (scale * scale + (scale // 2) ** 2 + (scale // 4) ** 2)
-
-
-def calculate_memory_pools(
-    model_file_size: int,
-    input_size: int,
-    total_boxes: int,
-    output_height: int = 84
-) -> Tuple[int, int]:
-    """根据模型大小动态计算内存池
-
-    参考 AIToolStack 的智能内存分配策略
-
-    Args:
-        model_file_size: 模型文件大小（字节）
-        input_size: 输入尺寸
-        total_boxes: 总输出框数量
-        output_height: 输出高度（YOLOv8 默认 84）
-
-    Returns:
-        (exec_memory_pool, ext_memory_pool)
-    """
-    input_buffer_size = input_size * input_size * 3
-    output_buffer_size = total_boxes * output_height
-
-    # exec_memory_pool: 3x 模型大小 + 缓冲区 + 50MB 开销
-    exec_memory_pool = max(
-        1073741824,  # 最小 1GB
-        int(model_file_size * 3 + input_buffer_size + output_buffer_size + 50 * 1024 * 1024)
-    )
-    exec_memory_pool = min(exec_memory_pool, 2147483648)  # 上限 2GB
-
-    # ext_memory_pool: 5x 模型大小 + 缓冲区 + 100MB 开销
-    ext_memory_pool = max(
-        2147483648,  # 最小 2GB
-        int(model_file_size * 5 + input_buffer_size * 2 + output_buffer_size * 2 + 100 * 1024 * 1024)
-    )
-    ext_memory_pool = min(ext_memory_pool, 4294967296)  # 上限 4GB
-
-    logger.info(f"计算内存池: exec={exec_memory_pool / 1024 / 1024:.1f}MB, ext={ext_memory_pool / 1024 / 1024:.1f}MB")
-    return exec_memory_pool, ext_memory_pool
+def get_ne301_toolchain(ne301_project_path: Path) -> NE301Toolchain:
+    """便捷函数：获取 NE301 工具链实例"""
+    return NE301ConfigManager.get_toolchain(ne301_project_path)
 
 
 def generate_ne301_json_config(
@@ -176,87 +334,42 @@ def generate_ne301_json_config(
     input_size: int,
     num_classes: int,
     class_names: List[str],
-    output_scale: Optional[float] = None,
-    output_zero_point: Optional[int] = None,
     confidence_threshold: float = 0.25,
-    iou_threshold: float = 0.45,
-    max_detections: int = 300,
-    total_boxes: Optional[int] = None,
-    output_shape: Optional[Tuple[int, int, int]] = None,
-    alignment_requirement: int = 8,
-) -> Dict[str, Any]:
-    """生成完整的 NE301 JSON 配置
+) -> Dict:
+    """
+    生成 NE301 模型 JSON 配置
 
-    参考 AIToolStack 的完整配置结构，包含所有必需字段
+    参考 AIToolStack 的配置格式
 
     Args:
-        tflite_path: TFLite 模型路径
+        tflite_path: TFLite 模型文件路径
         model_name: 模型名称
         input_size: 输入尺寸
         num_classes: 类别数量
         class_names: 类别名称列表
-        output_scale: 量化缩放因子（可选，自动提取）
-        output_zero_point: 量化零点（可选，自动提取）
         confidence_threshold: 置信度阈值
-        iou_threshold: IoU 阈值
-        max_detections: 最大检测数
-        total_boxes: 总输出框数（可选，自动计算）
-        output_shape: 输出形状（可选，自动提取）
-        alignment_requirement: 内存对齐要求
 
     Returns:
-        完整的 NE301 JSON 配置字典
+        Dict: NE301 JSON 配置
     """
-    logger.info(f"生成 NE301 JSON 配置: {model_name}")
+    # 计算输出层的 grid 尺寸（YOLOv8 的特征图）
+    # 对于输入尺寸 input_size，特征图通常是 input_size / 8, / 16, / 32
+    grid_large = input_size // 8
+    grid_medium = input_size // 16
+    grid_small = input_size // 32
 
-    # 1. 尝试从 TFLite 模型提取参数
-    if output_scale is None or output_zero_point is None or output_shape is None:
-        extracted_scale, extracted_zero_point, extracted_shape = extract_tflite_quantization_params(tflite_path)
+    # YOLOv8 的输出通道数：num_classes + 4 (box) + 1 (obj)
+    output_channels = num_classes + 5
 
-        if extracted_scale is not None:
-            output_scale = extracted_scale
-        if extracted_zero_point is not None:
-            output_zero_point = extracted_zero_point
-        if extracted_shape is not None:
-            output_shape = extracted_shape
-
-    # 2. 使用默认值（如果提取失败）
-    if output_scale is None:
-        output_scale = 0.003921568859368563  # 1/255 (uint8→int8)
-        logger.warning(f"⚠️  使用默认 output_scale: {output_scale}")
-
-    if output_zero_point is None:
-        output_zero_point = -128  # int8 零点
-        logger.warning(f"⚠️  使用默认 output_zero_point: {output_zero_point}")
-
-    # 3. 计算 total_boxes（如果未提供）
-    if total_boxes is None:
-        total_boxes = calculate_total_boxes(input_size)
-        logger.info(f"✅ 计算 total_boxes: {total_boxes}")
-
-    # 4. 确定输出维度
-    if output_shape is None:
-        output_shape = (1, 84, total_boxes)  # 默认 YOLOv8 输出形状
-        logger.warning(f"⚠️  使用默认 output_shape: {output_shape}")
-
-    batch, output_height, width = output_shape
-
-    # 5. 计算内存池
-    model_file_size = tflite_path.stat().st_size
-    exec_memory_pool, ext_memory_pool = calculate_memory_pools(
-        model_file_size, input_size, total_boxes, output_height
-    )
-
-    # 6. 生成完整配置
-    config = {
+    return {
         "version": "1.0.0",
         "model_info": {
             "name": model_name,
+            "version": "1.0.0",
+            "description": f"{model_name} - YOLOv8 Object Detection Model",
             "type": "OBJECT_DETECTION",
             "framework": "TFLITE",
-            "format": "INT8",
-            "input_size": input_size,
-            "num_classes": num_classes
+            "author": "NE301 Model Converter"
         },
         "input_spec": {
             "width": input_size,
@@ -265,47 +378,93 @@ def generate_ne301_json_config(
             "data_type": "uint8",
             "color_format": "RGB888_YUV444_1",
             "normalization": {
-                "scale": 255.0,
-                "offset": 0.0
+                "enabled": False,
+                "mean": [0.0, 0.0, 0.0],
+                "std": [1.0, 1.0, 1.0]
             }
         },
         "output_spec": {
-            "num_outputs": 1,
-            "outputs": [{
-                "name": "output0",
-                "batch": int(batch),
-                "height": int(output_height),
-                "width": int(width),
-                "channels": 1,
-                "data_type": "int8",
-                "scale": float(output_scale),
-                "zero_point": int(output_zero_point)
-            }]
+            "num_outputs": 3,
+            "outputs": [
+                {
+                    "name": "output_large",
+                    "batch": 1,
+                    "height": grid_large,
+                    "width": grid_large,
+                    "channels": output_channels,
+                    "data_type": "float32",
+                    "scale": 1.0,
+                    "zero_point": 0
+                },
+                {
+                    "name": "output_medium",
+                    "batch": 1,
+                    "height": grid_medium,
+                    "width": grid_medium,
+                    "channels": output_channels,
+                    "data_type": "float32",
+                    "scale": 1.0,
+                    "zero_point": 0
+                },
+                {
+                    "name": "output_small",
+                    "batch": 1,
+                    "height": grid_small,
+                    "width": grid_small,
+                    "channels": output_channels,
+                    "data_type": "float32",
+                    "scale": 1.0,
+                    "zero_point": 0
+                }
+            ]
         },
         "memory": {
-            "exec_memory_pool": int(exec_memory_pool),
-            "ext_memory_pool": int(ext_memory_pool),
-            "alignment_requirement": int(alignment_requirement)
+            "exec_memory_pool": 874512384,
+            "exec_memory_size": 1835008,
+            "ext_memory_pool": 2415919104,
+            "ext_memory_size": 8388608,
+            "alignment_requirement": 32
         },
-        "postprocess_type": "pp_od_yolo_v8_ui",
+        "postprocess_type": "pp_od_st_yolox_uf",
         "postprocess_params": {
-            "num_classes": int(num_classes),
+            "num_classes": num_classes,
             "class_names": class_names,
-            "total_boxes": int(total_boxes),
-            "confidence_threshold": float(confidence_threshold),
-            "iou_threshold": float(iou_threshold),
-            "max_detections": int(max_detections)
+            "confidence_threshold": confidence_threshold,
+            "iou_threshold": 0.5,
+            "max_detections": 100,
+            "scales": {
+                "large": {
+                    "grid_width": grid_large,
+                    "grid_height": grid_large,
+                    "anchors": [30.0, 30.0, 4.2, 15.0, 13.8, 42.0]
+                },
+                "medium": {
+                    "grid_width": grid_medium,
+                    "grid_height": grid_medium,
+                    "anchors": [15.0, 15.0, 2.1, 7.5, 6.9, 21.0]
+                },
+                "small": {
+                    "grid_width": grid_small,
+                    "grid_height": grid_small,
+                    "anchors": [7.5, 7.5, 1.05, 3.75, 3.45, 10.5]
+                }
+            }
+        },
+        "runtime": {
+            "execution": {
+                "mode": "SYNC",
+                "priority": 5,
+                "timeout_ms": 5000
+            },
+            "memory_management": {
+                "cache_policy": "WRITE_BACK",
+                "memory_pool_size": 2097152,
+                "garbage_collection": False
+            },
+            "debugging": {
+                "log_level": "INFO",
+                "performance_monitoring": True,
+                "memory_profiling": False
+            }
         }
     }
-
-    # ✅ 调试日志
-    import json
-    config_size = len(json.dumps(config, indent=2))
-    logger.info(f"✅ NE301 JSON 配置生成完成（大小: {config_size} 字节）")
-
-    if config_size < 1000:
-        logger.warning(f"⚠️  配置大小异常，完整配置:\n{json.dumps(config, indent=2)}")
-    else:
-        logger.debug(f"JSON 配置预览: {json.dumps(config, indent=2)[:500]}...")
-
-    return config

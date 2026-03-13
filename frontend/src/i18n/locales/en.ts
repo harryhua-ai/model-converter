@@ -21,7 +21,7 @@ export const en = {
   buttonDownload: 'Download',
   
   // Monitor & Logs
-  progressTitle: 'PROGRESS',
+  progressTitle: 'Conversion Progress',
   errorTitle: 'Conversion Failed',
   terminalTitle: 'conversion.log',
   exportLogs: 'Export',
@@ -29,6 +29,12 @@ export const en = {
   totalLogs: 'logs total',
   runningStatus: 'Running',
   idleStatus: 'Idle',
+
+  // Progress Steps
+  step1Export: 'Export TFLite',
+  step2Quantize: 'Quantize Model',
+  step3Prepare: 'Prepare NE301',
+  step4Build: 'NE301 Build',
   
   // Messages and Notifications
   welcomeMsg: 'Welcome to NE301 Model Converter',

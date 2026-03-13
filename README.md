@@ -11,6 +11,32 @@ PyTorch 模型转换为 NE301 设备可用 .bin 文件的工具。
 
 ## 快速开始
 
+### 方式 1: Docker 部署（推荐）
+
+**单容器部署**（前端 + 后端）:
+```bash
+# 1. 拉取 NE301 镜像
+docker pull camthink/ne301-dev:latest
+
+# 2. 构建并启动服务（自动构建前端）
+docker-compose up -d
+
+# 3. 访问 Web 界面
+# 打开浏览器访问 http://localhost:8000
+```
+
+**查看日志**:
+```bash
+docker-compose logs -f
+```
+
+**停止服务**:
+```bash
+docker-compose down
+```
+
+### 方式 2: 本地开发
+
 ### 1. 环境准备
 
 ```bash
@@ -75,6 +101,42 @@ python -m uvicorn app.main:app --reload --port 8000
 6. 转换完成后下载 .bin 文件
 
 ## 技术架构
+
+### Docker 化架构
+
+**部署方式**:
+- **单容器部署**: 前端和后端集成在一个 Docker 镜像中
+- **多阶段构建**:
+  - 阶段 1: node:20-slim（构建前端）
+  - 阶段 2: python:3.10-slim（运行后端）
+- **镜像大小**: 约 1.01 GB
+
+**技术栈**:
+- **前端**: Preact 10 + TypeScript + Tailwind CSS
+- **后端**: Python 3.11 + FastAPI + Docker
+- **工具链**: NE301 Docker 容器
+
+**容器编排**:
+```
+┌─────────────────────────────────────────┐
+│    Docker Container (API + Frontend)     │
+│  ┌──────────┐         ┌──────────┐      │
+│  │ Frontend │─────▶   │ Backend  │      │
+│  │ (dist/)  │         │ (FastAPI)│      │
+│  └──────────┘         └──────────┘      │
+│         ▲                    │          │
+│         │                    ▼          │
+│    Static Files    Docker Adapter       │
+└─────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│     Docker Container (NE301 Tools)       │
+│  PyTorch → TFLite → NE301 .bin           │
+└─────────────────────────────────────────┘
+```
+
+### 传统开发架构
 
 - **前端**: Preact 10 + TypeScript + Tailwind CSS
 - **后端**: Python 3.11 + FastAPI + Docker

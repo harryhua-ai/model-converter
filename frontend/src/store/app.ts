@@ -5,24 +5,24 @@ import type { ConversionConfig, ConversionTask } from '../types';
  * 预设配置
  */
 export const PRESETS: Record<string, Omit<ConversionConfig, 'num_classes'>> = {
-  fast: {
+  '256x256': {
     model_type: 'YOLOv8',
     input_size: 256,
     confidence_threshold: 0.25,
     quantization: 'int8',
     use_calibration: false,
   },
-  balanced: {
+  '320x320': {
     model_type: 'YOLOv8',
-    input_size: 480,
+    input_size: 320,
     confidence_threshold: 0.25,
     quantization: 'int8',
     use_calibration: true,
   },
-  high_accuracy: {
-    model_type: 'YOLOX',
-    input_size: 640,
-    confidence_threshold: 0.3,
+  '480x480': {
+    model_type: 'YOLOv8',
+    input_size: 480,
+    confidence_threshold: 0.25,
     quantization: 'int8',
     use_calibration: true,
   },
@@ -41,7 +41,7 @@ interface AppState {
   selectedPreset: string;
   numClasses: number;
   modelType: 'YOLOv8' | 'YOLOX';
-  inputSize: 256 | 480 | 640;
+  inputSize: 256 | 320 | 480;
   confidenceThreshold: number;
   quantization: 'int8';
   useCalibration: boolean;
@@ -60,7 +60,7 @@ interface AppState {
   setSelectedPreset: (preset: string) => void;
   setNumClasses: (numClasses: number) => void;
   setModelType: (modelType: 'YOLOv8' | 'YOLOX') => void;
-  setInputSize: (size: 256 | 480 | 640) => void;
+  setInputSize: (size: 256 | 320 | 480) => void;
   setConfidenceThreshold: (threshold: number) => void;
   setQuantization: (quantization: 'int8') => void;
   setUseCalibration: (useCalibration: boolean) => void;

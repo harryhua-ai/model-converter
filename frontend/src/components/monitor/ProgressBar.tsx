@@ -1,4 +1,5 @@
 import { cn } from './utils';
+import { useI18nStore } from '../../store/i18n';
 
 interface ProgressBarProps {
   progress: number;
@@ -7,21 +8,22 @@ interface ProgressBarProps {
 }
 
 export function ProgressBar({ progress, status, className }: ProgressBarProps) {
+  const { t } = useI18nStore();
   const clampedProgress = Math.min(100, Math.max(0, progress));
 
   // 定义步骤阈值
   const steps = [
-    { label: '导出', threshold: 0 },
-    { label: '量化', threshold: 30 },
-    { label: '打包', threshold: 70 },
-    { label: '完成', threshold: 100 },
+    { label: t('step1Export') || 'Export TFLite', threshold: 0 },
+    { label: t('step2Quantize') || 'Quantize Model', threshold: 30 },
+    { label: t('step3Prepare') || 'Prepare NE301', threshold: 70 },
+    { label: t('step4Build') || 'NE301 Build', threshold: 100 },
   ];
 
   return (
     <div class={cn('w-full', className)}>
       <div class="flex items-center justify-between mb-2">
         <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-          转换进度
+          {t('progressTitle') || 'Conversion Progress'}
         </span>
         <span class="text-sm font-semibold text-primary-600 dark:text-primary-400">
           {clampedProgress}%

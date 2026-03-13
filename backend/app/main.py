@@ -9,6 +9,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import logging
+import sys
+
+# 🔧 配置日志输出到 stdout
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(levelname)s:%(name)s:%(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,9 +103,10 @@ def _configure_static_files(app: FastAPI):
     from pathlib import Path
     import os
 
-    # 获取 worktree 根目录
-    worktree_root = Path(__file__).parent.parent.parent
-    frontend_path = worktree_root / "frontend" / "dist"
+    # 获取应用根目录（Docker 容器中为 /app）
+    # __file__ = /app/app/main.py -> parent = /app/app -> parent = /app
+    app_root = Path(__file__).parent.parent
+    frontend_path = app_root / "frontend" / "dist"
 
     logger.info(f"查找前端路径: {frontend_path}")
     logger.info(f"路径存在? {frontend_path.exists()}")

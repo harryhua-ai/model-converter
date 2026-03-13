@@ -19,7 +19,7 @@ class Settings(BaseSettings):
 
     # Docker 配置
     NE301_DOCKER_IMAGE: str = "camthink/ne301-dev:latest"  # NE301 Docker 镜像名称
-    NE301_PROJECT_PATH: str = "/workspace/ne301"  # 容器内 NE301 项目路径
+    NE301_PROJECT_PATH: str = "/workspace"  # 容器内 NE301 项目路径（命名卷挂载点）
     CONTAINER_NAME: str = "model-converter-api"  # Docker 容器名称
 
     # 文件路径配置

@@ -24,22 +24,19 @@ interface Preset {
  */
 const PRESETS: Preset[] = [
   {
-    id: 'fast',
-    name: '快速转换',
+    id: '256x256',
+    name: '256*256',
     size: 256,
-    description: '最快的转换速度，适合快速验证。模型精度略低，文件大小较小。',
   },
   {
-    id: 'balanced',
-    name: '平衡模式',
+    id: '320x320',
+    name: '320*320',
+    size: 320,
+  },
+  {
+    id: '480x480',
+    name: '480*480',
     size: 480,
-    description: '速度与精度的最佳平衡。推荐大多数场景使用，兼顾性能和准确度。',
-  },
-  {
-    id: 'high_accuracy',
-    name: '高精度模式',
-    size: 640,
-    description: '最高精度，适合对准确度要求高的场景。转换时间较长，模型文件较大。',
   },
 ];
 
@@ -69,6 +66,15 @@ export default function HomePage() {
   const { state, startConversion, cancelConversion, downloadResult, addLog } =
     useConversion();
 
+  // 同步 hook 的状态到 store
+  useEffect(() => {
+    if (state.status && state.status !== conversionStatus) {
+      console.log('[DEBUG] 同步状态到 store:', state.status);
+      setConversionStatus(state.status);
+      setCurrentTask(state.taskId);
+    }
+  }, [state.status, state.taskId]);
+
   // 初始化日志
   useEffect(() => {
     addLog('欢迎使用 NE301 模型转换器');
@@ -83,6 +89,10 @@ export default function HomePage() {
 
   // 处理开始转换
   const handleStartConversion = async () => {
+    console.log('[DEBUG] handleStartConversion 被调用');
+    console.log('[DEBUG] selectedFile:', selectedFile);
+    console.log('[DEBUG] numClasses:', numClasses);
+
     if (!selectedFile) {
       addLog(t('errorNoModel'));
       return;
@@ -93,13 +103,21 @@ export default function HomePage() {
       return;
     }
 
+    console.log('[DEBUG] 准备调用 startConversion');
     const config = getConfig();
-    await startConversion(
-      selectedFile,
-      config,
-      selectedYaml || undefined,
-      selectedCalibration || undefined
-    );
+    console.log('[DEBUG] config:', config);
+
+    try {
+      await startConversion(
+        selectedFile,
+        config,
+        selectedYaml || undefined,
+        selectedCalibration || undefined
+      );
+      console.log('[DEBUG] startConversion 完成');
+    } catch (error) {
+      console.error('[DEBUG] startConversion 出错:', error);
+    }
   };
 
   // 处理下载
@@ -311,9 +329,6 @@ export default function HomePage() {
             {/* Progress Bar */}
             {state.isConverting && (
               <section className="card p-5 border border-gray-100 dark:border-gray-800 hover:shadow-card-hover transition-shadow duration-300 flex-shrink-0">
-                <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3 uppercase tracking-wider">
-                  {t('progressTitle')}
-                </h3>
                 <ProgressBar
                   progress={state.progress}
                   status={state.currentStep}

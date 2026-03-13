@@ -570,6 +570,15 @@ async def test_convert_endpoint():
 
 ### Docker 容器化部署（推荐）
 
+**架构说明**:
+- **单容器部署**: 前端和后端集成在一个 Docker 镜像中
+- **多阶段构建**: 使用 Docker 多阶段构建优化镜像大小
+  - 阶段 1: node:20-slim（构建前端）
+  - 阶段 2: python:3.10-slim（运行后端）
+- **静态文件服务**: 后端 FastAPI 直接提供前端静态文件
+- **镜像大小**: 约 1.01 GB
+- **构建时间**: 约 15-20 分钟（含 Docker 层缓存）
+
 **一键部署**:
 ```bash
 chmod +x deploy.sh
@@ -581,7 +590,7 @@ chmod +x deploy.sh
 # 1. 拉取 NE301 镜像
 docker pull camthink/ne301-dev:latest
 
-# 2. 构建并启动服务
+# 2. 构建并启动服务（包含前端构建）
 docker-compose up -d
 
 # 3. 查看日志
@@ -589,6 +598,15 @@ docker-compose logs -f
 
 # 4. 停止服务
 docker-compose down
+```
+
+**重新构建镜像**:
+```bash
+# 当前端代码修改后，需要重新构建镜像
+docker-compose build
+
+# 或者清除缓存强制重建
+docker-compose build --no-cache
 ```
 
 **开发模式**:
@@ -649,6 +667,41 @@ pm2 logs model-converter
 
 # 重启服务
 pm2 restart model-converter
+```
+
+### 前端 Docker 化注意事项
+
+**构建优化**:
+- Dockerfile 使用 `npm install` 而非 `npm ci`（避免 lock file 同步问题）
+- 前端构建产物自动优化（gzip 压缩、Tree-shaking）
+- 使用 Docker Build Cache 加速重复构建
+
+**静态文件路径**:
+- 容器内路径: `/app/frontend/dist`
+- FastAPI 挂载配置: `app.mount("/", StaticFiles(...), html=True)`
+- 支持 SPA 路由（前端路由直接返回 index.html）
+
+**性能指标**:
+- 前端构建时间: ~1.7 秒
+- npm 依赖安装: ~3.3 秒
+- 静态资源大小:
+  - HTML: 0.73 kB (gzip: 0.43 kB)
+  - CSS: 42.50 kB (gzip: 6.66 kB)
+  - JS: 167.94 kB (gzip: 58.30 kB)
+
+**验证清单**:
+```bash
+# 1. 验证镜像构建
+docker images | grep model-converter-api
+
+# 2. 验证容器内前端文件
+docker exec model-converter-api ls -la /app/frontend/dist
+
+# 3. 验证前端访问
+curl -I http://localhost:8000/
+
+# 4. 验证 API 访问
+curl http://localhost:8000/api/setup/check
 ```
 
 ---

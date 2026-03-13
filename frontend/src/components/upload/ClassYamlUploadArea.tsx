@@ -128,10 +128,10 @@ export default function ClassYamlUploadArea({
     <div className="animate-fade-in">
       <div className="mb-3">
         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          类别定义文件（可选）
+          {t('step2Title')}
         </label>
         <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-          上传 .yaml/.yml 文件定义模型输出的类别（用于目标检测模型）。如不需要可跳过。
+          {t('step3Desc')}
         </p>
       </div>
 
@@ -198,15 +198,6 @@ export default function ClassYamlUploadArea({
               {t('changeFile')}
             </button>
           </div>
-
-          {preview && (
-            <div className="mt-3">
-              <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">文件预览：</p>
-              <pre className="bg-gray-50 dark:bg-gray-900 p-3 rounded-xl text-xs text-gray-700 dark:text-gray-300 overflow-x-auto border border-gray-200 dark:border-gray-700">
-                {preview}
-              </pre>
-            </div>
-          )}
 
           {parsedClasses && (
             <div className="mt-3 p-4 bg-success-50 dark:bg-success-950/20 border border-success-200 dark:border-success-800 rounded-xl animate-scale-in">
