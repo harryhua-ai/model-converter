@@ -47,7 +47,7 @@ refactor:
     - 重构
     - 优化代码
     - 改善结构
-  priority: 40
+  priority: 50
   strong_match: true  # "重构"必须精确匹配
   agents:
     - architect
@@ -68,7 +68,7 @@ performance_optimization:
     - 性能
     - 优化速度
     - 提升效率
-  priority: 50
+  priority: 40
   strong_match: false
   agents:
     - developer
@@ -130,7 +130,7 @@ documentation:
     - 文档
     - 说明
     - 更新文档
-  priority: 50
+  priority: 60
   strong_match: true
   agents:
     - planner
@@ -148,7 +148,7 @@ maintenance:
     - 更新
     - 升级
     - 维护
-  priority: 60  # 低优先级
+  priority: 70  # 低优先级
   strong_match: false
   agents:
     - developer

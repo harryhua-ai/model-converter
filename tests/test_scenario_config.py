@@ -95,7 +95,7 @@ def test_maintenance_scenario():
     maintenance = scenarios["maintenance"]
 
     assert maintenance["name"] == "常规维护"
-    assert maintenance["priority"] == 60
+    assert maintenance["priority"] == 70
     assert maintenance.get("default") is None  # 不应该有 default 字段
 
 
@@ -110,8 +110,8 @@ def test_priority_ordering():
     assert priorities["urgent_release"] == 1
     # security_review 优先级第二 (10)
     assert priorities["security_review"] == 10
-    # maintenance 优先级最低 (60)
-    assert priorities["maintenance"] == 60
+    # maintenance 优先级最低 (70)
+    assert priorities["maintenance"] == 70
 
 
 def test_closed_loops_values():
