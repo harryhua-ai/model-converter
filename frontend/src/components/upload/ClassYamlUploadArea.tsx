@@ -1,5 +1,6 @@
 import { useState } from 'preact/hooks';
 import { FileText, CheckCircle, AlertCircle } from 'lucide-preact';
+import { useI18nStore } from '../../store/i18n';
 import * as yaml from 'js-yaml';
 
 interface ClassYamlUploadAreaProps {
@@ -19,6 +20,7 @@ export default function ClassYamlUploadArea({
   selectedFile,
   onClassDetected,
 }: ClassYamlUploadAreaProps) {
+  const { t } = useI18nStore();
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string>('');
   const [preview, setPreview] = useState<string>('');
@@ -167,10 +169,11 @@ export default function ClassYamlUploadArea({
             />
           </div>
           <p className="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">
-            上传类别定义文件
+            {t('dragDropYaml')}
+            <span className="text-primary-600 dark:text-primary-400 ml-1 hover:underline cursor-pointer">{t('browseFile')}</span>
           </p>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            支持 .yaml、.yml 格式
+            {t('supportFormatYaml')}
           </p>
         </div>
       ) : (
@@ -192,7 +195,7 @@ export default function ClassYamlUploadArea({
               onClick={handleRemove}
               className="text-sm text-error-600 hover:text-error-700 dark:text-error-400 dark:hover:text-error-300 font-medium px-3 py-1 rounded-lg hover:bg-error-50 dark:hover:bg-error-950/20 transition-colors"
             >
-              移除
+              {t('changeFile')}
             </button>
           </div>
 

@@ -19,7 +19,7 @@ export function LogTerminal({ logs, className }: LogTerminalProps) {
   return (
     <div
       class={cn(
-        'w-full rounded-xl overflow-hidden',
+        'w-full flex flex-col rounded-xl overflow-hidden',
         'bg-gradient-to-br from-gray-900 to-gray-950',
         'border border-gray-700 dark:border-gray-800',
         'shadow-2xl',
@@ -50,7 +50,7 @@ export function LogTerminal({ logs, className }: LogTerminalProps) {
       {/* 日志内容 */}
       <div
         ref={scrollRef}
-        class="h-64 overflow-y-auto p-4 font-mono text-sm custom-scrollbar"
+        class="flex-1 min-h-[16rem] overflow-y-auto p-4 font-mono text-sm custom-scrollbar"
       >
         {logs.length === 0 ? (
           <div class="text-gray-500 dark:text-gray-600 italic animate-pulse">

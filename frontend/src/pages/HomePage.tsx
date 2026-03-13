@@ -3,14 +3,21 @@ import { Play, Download, RefreshCw, FileText } from 'lucide-preact';
 import ModelUploadArea from '../components/upload/ModelUploadArea';
 import ClassYamlUploadArea from '../components/upload/ClassYamlUploadArea';
 import CalibrationUploadArea from '../components/upload/CalibrationUploadArea';
-import { PresetCard, Preset } from '../components/config/PresetCard';
 import { ProgressBar } from '../components/monitor/ProgressBar';
 import { LogTerminal } from '../components/monitor/LogTerminal';
 import { CancelButton } from '../components/monitor/CancelButton';
 import { useAppStore } from '../store/app';
+import { useI18nStore } from '../store/i18n';
 import { useConversion } from '../hooks/useConversion';
-import { useWebSocket } from '../hooks/useWebSocket';
+import { LanguageSwitcher } from '../components/ui/LanguageSwitcher';
 import { downloadFile } from '../utils/helpers';
+
+interface Preset {
+  id: string;
+  name: string;
+  size: number;
+  description: string;
+}
 
 /**
  * 预设配置列表
@@ -57,36 +64,16 @@ export default function HomePage() {
     reset,
   } = useAppStore();
 
+  const { t } = useI18nStore();
+
   const { state, startConversion, cancelConversion, downloadResult, addLog } =
     useConversion();
-
-  // WebSocket 连接
-  const { isConnected } = useWebSocket(currentTask?.task_id ?? null, {
-    onProgress: (progress, step) => {
-      // 进度更新在 useConversion 中通过轮询处理
-    },
-    onLog: (log) => {
-      addLog(log);
-    },
-    onStatusChange: (status) => {
-      setConversionStatus(
-        status as 'idle' | 'converting' | 'completed' | 'failed'
-      );
-    },
-    onError: (error) => {
-      addLog(`错误: ${error}`);
-    },
-    onComplete: () => {
-      setConversionStatus('completed');
-      addLog('转换完成!');
-    },
-  });
 
   // 初始化日志
   useEffect(() => {
     addLog('欢迎使用 NE301 模型转换器');
     addLog('请上传模型文件开始转换');
-  }, []);
+  }, [addLog]);
 
   // 处理类别检测（从 YAML 文件）
   const handleClassDetected = (numClasses: number, names: string[]) => {
@@ -97,12 +84,12 @@ export default function HomePage() {
   // 处理开始转换
   const handleStartConversion = async () => {
     if (!selectedFile) {
-      addLog('错误: 请先选择模型文件');
+      addLog(t('errorNoModel'));
       return;
     }
 
     if (numClasses <= 0) {
-      addLog('错误: 类别数必须大于 0');
+      addLog(t('errorNoClasses'));
       return;
     }
 
@@ -127,7 +114,7 @@ export default function HomePage() {
   // 处理重置
   const handleReset = () => {
     reset();
-    addLog('已重置');
+    addLog(t('buttonReset'));
   };
 
   // 是否可以开始转换
@@ -139,8 +126,8 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50/30 to-purple-50/20 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800">
       {/* Header */}
-      <header className="bg-white dark:bg-gray-800 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <header className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-100 dark:border-gray-800">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               {/* Logo */}
@@ -148,41 +135,34 @@ export default function HomePage() {
                 <span className="text-white font-bold text-lg">N</span>
               </div>
               <div>
-                <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 dark:from-white dark:to-gray-200 bg-clip-text text-transparent">
+                <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 dark:from-white dark:to-gray-200 bg-clip-text text-transparent">
                   NE301 模型转换器
                 </h1>
-                <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   将 PyTorch/ONNX 模型转换为 NE301 格式
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <div
-                className={`w-3 h-3 rounded-full animate-pulse-slow ${
-                  isConnected ? 'bg-success-500' : 'bg-error-500'
-                }`}
-              />
-              <span className="text-sm text-gray-600 dark:text-gray-400">
-                {isConnected ? '已连接' : '未连接'}
-              </span>
+            <div className="flex items-center gap-4">
+              <LanguageSwitcher />
             </div>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Left Column: Upload and Configuration */}
-          <div className="lg:col-span-2 space-y-6">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8 items-start">
+          {/* Left Column: Upload Steps */}
+          <div className="lg:col-span-1 space-y-6">
             {/* Step 1: Upload Model */}
-            <section className="card p-8 hover:shadow-card-hover transition-shadow duration-300">
+            <section className="card p-6 lg:p-8 hover:shadow-card-hover transition-shadow duration-300 border border-gray-100 dark:border-gray-800">
               <div className="flex items-center gap-3 mb-4">
-                <div className="step-indicator bg-gradient-to-br from-primary-500 to-primary-600">
+                <div className="step-indicator bg-gradient-to-br from-primary-500 to-primary-600 shadow-sm">
                   1
                 </div>
-                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                  上传模型文件
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  {t('step1Title')}
                 </h2>
               </div>
               <ModelUploadArea
@@ -192,13 +172,13 @@ export default function HomePage() {
             </section>
 
             {/* Step 2: Upload YAML (Optional) */}
-            <section className="card p-8 hover:shadow-card-hover transition-shadow duration-300">
+            <section className="card p-6 lg:p-8 hover:shadow-card-hover transition-shadow duration-300 border border-gray-100 dark:border-gray-800">
               <div className="flex items-center gap-3 mb-4">
-                <div className="step-indicator bg-gradient-to-br from-primary-500 to-primary-600">
+                <div className="step-indicator bg-gradient-to-br from-primary-500 to-primary-600 shadow-sm">
                   2
                 </div>
-                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                  上传类别定义文件（可选）
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  {t('step2Title')}
                 </h2>
               </div>
               <ClassYamlUploadArea
@@ -208,19 +188,16 @@ export default function HomePage() {
               />
             </section>
 
-            {/* Step 2.5: Upload Calibration Dataset (Optional) */}
-            <section className="card p-8 hover:shadow-card-hover transition-shadow duration-300">
+            {/* Step 3: Upload Calibration Dataset (Optional) */}
+            <section className="card p-6 lg:p-8 hover:shadow-card-hover transition-shadow duration-300 border border-gray-100 dark:border-gray-800">
               <div className="flex items-center gap-3 mb-4">
-                <div className="step-indicator bg-gradient-to-br from-warning-500 to-warning-600">
-                  2.5
+                <div className="step-indicator bg-gradient-to-br from-primary-500 to-primary-600 shadow-sm">
+                  3
                 </div>
                 <div>
-                  <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                    上传校准数据集（可选）
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                    {t('step3Title')}
                   </h2>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    上传校准图片集可提高量化精度
-                  </p>
                 </div>
               </div>
               <CalibrationUploadArea
@@ -232,117 +209,80 @@ export default function HomePage() {
                 </div>
               )}
             </section>
+          </div>
 
-            {/* Step 3: Select Preset */}
-            <section className="card p-8 hover:shadow-card-hover transition-shadow duration-300">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="step-indicator bg-gradient-to-br from-primary-500 to-primary-600">
-                  3
-                </div>
-                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                  选择转换预设
-                </h2>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                {PRESETS.map((preset) => (
-                  <PresetCard
-                    key={preset.id}
-                    preset={preset}
-                    selected={selectedPreset === preset.id}
-                    onSelect={() => setSelectedPreset(preset.id)}
-                  />
-                ))}
-              </div>
-
-              {/* Number of Classes */}
-              <div className="mt-6">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  类别数量
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="1000"
-                  value={numClasses}
-                  onChange={(e) =>
-                    setNumClasses(parseInt(e.currentTarget.value) || 80)
-                  }
-                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
-                  disabled={state.isConverting}
-                />
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  模型输出的类别数（例如 COCO 数据集为 80）
-                </p>
-              </div>
-            </section>
-
-            {/* Action Buttons */}
-            <section className="card p-8 hover:shadow-card-hover transition-shadow duration-300">
-              <div className="flex flex-wrap gap-4">
-                {canStart && (
-                  <button
-                    onClick={handleStartConversion}
-                    disabled={!canStart}
-                    className="btn-primary"
+          {/* Right Column: Configuration, Actions & Logs */}
+          <div className="lg:col-span-2 flex flex-col space-y-6 h-[calc(100vh-180px)] min-h-[600px]">
+            {/* Top Toolbar: Mode, Classes, Actions */}
+            <section className="card p-5 border border-gray-100 dark:border-gray-800 flex flex-wrap items-end justify-between gap-4 hover:shadow-card-hover transition-shadow duration-300">
+              <div className="flex gap-4 flex-wrap flex-1 items-end">
+                {/* Mode Select */}
+                <div className="min-w-[140px] flex-1 sm:flex-none">
+                  <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wider">{t('modeLabel')}</label>
+                  <select
+                    value={selectedPreset}
+                    onChange={(e) => setSelectedPreset(e.currentTarget.value)}
+                    disabled={state.isConverting}
+                    className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent text-gray-900 dark:text-white font-medium transition-colors"
                   >
-                    <Play className="w-5 h-5" />
-                    开始转换
+                    {PRESETS.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.size})</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Classes */}
+                <div className="w-24 flex-none">
+                  <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wider">{t('classesLabel')}</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="1000"
+                    value={numClasses}
+                    onChange={(e) => setNumClasses(parseInt(e.currentTarget.value) || 80)}
+                    disabled={state.isConverting}
+                    className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent text-gray-900 dark:text-white font-medium transition-colors"
+                  />
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex flex-wrap items-center gap-3">
+                {canStart && (
+                  <button onClick={handleStartConversion} disabled={!canStart} className="btn-primary py-2 px-6">
+                    <Play className="w-4 h-4 mr-1.5" /> 
+                    <span>{t('buttonStart')}</span>
                   </button>
                 )}
 
                 {state.isConverting && (
-                  <CancelButton
-                    onCancel={cancelConversion}
-                    isCancelling={state.isCancelling}
-                  />
+                  <CancelButton onCancel={cancelConversion} isCancelling={state.isCancelling} />
                 )}
 
-                {showDownload && (
-                  <button
-                    onClick={handleDownload}
-                    className="btn-success"
-                  >
-                    <Download className="w-5 h-5" />
-                    下载模型
+                {(conversionStatus !== 'idle' || state.logs.length > 0) && !state.isConverting && (
+                  <button onClick={handleReset} className="btn-secondary py-2 px-6">
+                    <RefreshCw className="w-4 h-4 mr-1.5" /> 
+                    <span>{t('buttonReset')}</span>
                   </button>
                 )}
 
-                {(conversionStatus !== 'idle' || state.logs.length > 0) && (
-                  <button
-                    onClick={handleReset}
-                    className="btn-secondary"
-                  >
-                    <RefreshCw className="w-5 h-5" />
-                    重置
+                {showDownload && (
+                  <button onClick={handleDownload} className="btn-success py-2 px-6">
+                    <Download className="w-4 h-4 mr-1.5" /> 
+                    <span>{t('buttonDownload')}</span>
                   </button>
                 )}
               </div>
             </section>
-          </div>
-
-          {/* Right Column: Progress and Logs */}
-          <div className="space-y-6">
-            {/* Progress Bar */}
-            {state.isConverting && (
-              <section className="card p-8 hover:shadow-card-hover transition-shadow duration-300">
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-                  转换进度
-                </h3>
-                <ProgressBar
-                  progress={state.progress}
-                  status={state.currentStep}
-                />
-              </section>
-            )}
 
             {/* Error Message */}
             {state.error && (
-              <section className="bg-error-50 dark:bg-error-950/20 border-l-4 border-error-500 rounded-xl p-4 animate-slide-up">
+              <section className="bg-error-50 dark:bg-error-950/20 border-l-4 border-error-500 rounded-xl p-4 animate-slide-up flex-shrink-0">
                 <div className="flex items-start gap-3">
                   <div className="flex-shrink-0">
                     <div className="w-6 h-6 rounded-full bg-error-500 flex items-center justify-center">
                       <svg
-                        className="w-4 h-4 text-white"
+                        className="w-3.5 h-3.5 text-white"
                         fill="none"
                         stroke="currentColor"
                         viewBox="0 0 24 24"
@@ -357,8 +297,8 @@ export default function HomePage() {
                     </div>
                   </div>
                   <div>
-                    <h4 className="text-sm font-semibold text-error-800 dark:text-error-400 mb-1">
-                      转换失败
+                    <h4 className="text-sm font-bold text-error-800 dark:text-error-400 mb-0.5">
+                      {t('errorTitle')}
                     </h4>
                     <p className="text-sm text-error-700 dark:text-error-300">
                       {state.error}
@@ -368,31 +308,30 @@ export default function HomePage() {
               </section>
             )}
 
-            {/* Log Terminal */}
-            <section className="card p-8 hover:shadow-card-hover transition-shadow duration-300">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                  转换日志
+            {/* Progress Bar */}
+            {state.isConverting && (
+              <section className="card p-5 border border-gray-100 dark:border-gray-800 hover:shadow-card-hover transition-shadow duration-300 flex-shrink-0">
+                <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3 uppercase tracking-wider">
+                  {t('progressTitle')}
                 </h3>
-                <button
-                  onClick={() => {
-                    // 可以添加清空日志的功能
-                  }}
-                  className="text-sm text-primary-600 hover:text-primary-700"
-                >
-                  <FileText className="w-4 h-4 inline mr-1" />
-                  导出
-                </button>
-              </div>
-              <LogTerminal logs={state.logs} />
-            </section>
+                <ProgressBar
+                  progress={state.progress}
+                  status={state.currentStep}
+                />
+              </section>
+            )}
+
+            {/* Log Terminal area */}
+            <div className="flex-1 min-h-0 flex">
+              <LogTerminal logs={state.logs} className="h-full" />
+            </div>
           </div>
         </div>
       </main>
 
       {/* Footer */}
-      <footer className="mt-12 py-6 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-sm text-gray-600 dark:text-gray-400">
+      <footer className="mt-8 py-6 bg-transparent border-t border-transparent">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-sm text-gray-500 dark:text-gray-500">
           <p>NE301 Model Converter - 将深度学习模型转换为嵌入式设备格式</p>
         </div>
       </footer>

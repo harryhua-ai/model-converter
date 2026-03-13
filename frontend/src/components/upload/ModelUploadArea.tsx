@@ -1,5 +1,6 @@
 import { useState } from 'preact/hooks';
 import { UploadCloud, CheckCircle, AlertCircle } from 'lucide-preact';
+import { useI18nStore } from '../../store/i18n';
 
 interface ModelUploadAreaProps {
   onFileSelect: (file: File) => void;
@@ -7,6 +8,7 @@ interface ModelUploadAreaProps {
 }
 
 export default function ModelUploadArea({ onFileSelect, selectedFile }: ModelUploadAreaProps) {
+  const { t } = useI18nStore();
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string>('');
 
@@ -106,10 +108,11 @@ export default function ModelUploadArea({ onFileSelect, selectedFile }: ModelUpl
           />
         </div>
         <p className="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">
-          {selectedFile ? selectedFile.name : '拖拽文件到此处或点击上传'}
+          {selectedFile ? `${t('fileSelected')} ${selectedFile.name}` : t('dragDropModel')}
+          {!selectedFile && <span className="text-primary-600 dark:text-primary-400 ml-1 hover:underline cursor-pointer">{t('browseFile')}</span>}
         </p>
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          支持 .pt、.pth、.onnx 格式，最大 500MB
+          {t('supportFormatModel')}
         </p>
         {selectedFile && (
           <div className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-success-50 dark:bg-success-950/20 rounded-xl animate-scale-in">

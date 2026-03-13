@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'preact/hooks';
 import { modelApi } from '../services/api';
 import { downloadFile } from '../utils/helpers';
+import { useI18nStore } from '../store/i18n';
 import type { ConversionConfig } from '../types';
 
 interface ConversionState {
@@ -32,6 +33,7 @@ interface UseConversionReturn {
  * 转换逻辑 Hook
  */
 export function useConversion(): UseConversionReturn {
+  const { t } = useI18nStore();
   const [state, setState] = useState<ConversionState>({
     isConverting: false,
     isCancelling: false,
@@ -67,13 +69,13 @@ export function useConversion(): UseConversionReturn {
           isConverting: true,
           isCancelling: false,
           progress: 0,
-          currentStep: '正在上传模型文件...',
+          currentStep: 'Initializing...', // Or keep English here and let UI translate if needed, but we're mostly putting strings in logs
           logs: [],
           error: null,
           status: 'converting',
         });
 
-        addLog('开始转换任务...');
+        addLog(t('welcomeMsg'));
 
         // 上传模型并启动转换
         const response = await modelApi.uploadModel(
@@ -84,19 +86,19 @@ export function useConversion(): UseConversionReturn {
         );
         const taskId = response.task_id;
 
-        addLog(`任务已创建: ${taskId}`);
+        addLog(`Task created: ${taskId}`);
         updateState({ taskId });
 
         // 轮询任务状态 (WebSocket 连接在 HomePage 组件中处理)
         await pollTaskStatus(taskId);
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : '转换失败';
+        const errorMessage = error instanceof Error ? error.message : t('errorTitle');
         updateState({
           isConverting: false,
           error: errorMessage,
           status: 'failed',
         });
-        addLog(`错误: ${errorMessage}`);
+        addLog(`Error: ${errorMessage}`);
       }
     },
     [updateState, addLog]
@@ -120,29 +122,29 @@ export function useConversion(): UseConversionReturn {
           updateState({
             isConverting: false,
             progress: 100,
-            currentStep: '转换完成!',
+            currentStep: 'Completed',
           });
-          addLog('✅ 转换成功完成!');
+          addLog('✅ Conversion completed');
         } else if (taskStatus.status === 'failed') {
           clearInterval(pollInterval);
           updateState({
             isConverting: false,
-            error: taskStatus.error_message || '转换失败',
+            error: taskStatus.error_message || t('errorTitle'),
             status: 'failed',
           });
-          addLog(`❌ 转换失败: ${taskStatus.error_message || '未知错误'}`);
+          addLog(`❌ Failed: ${taskStatus.error_message || 'Unknown error'}`);
         } else if (taskStatus.status === 'running') {
           addLog(`${taskStatus.current_step} (${taskStatus.progress}%)`);
         }
       } catch (error) {
         clearInterval(pollInterval);
-        const errorMessage = error instanceof Error ? error.message : '获取任务状态失败';
+        const errorMessage = error instanceof Error ? error.message : t('errorTitle');
         updateState({
           isConverting: false,
           error: errorMessage,
           status: 'failed',
         });
-        addLog(`错误: ${errorMessage}`);
+        addLog(`Error: ${errorMessage}`);
       }
     }, 1000);
 
@@ -155,7 +157,7 @@ export function useConversion(): UseConversionReturn {
 
     try {
       updateState({ isCancelling: true });
-      addLog('正在取消任务...');
+      addLog('Cancelling task...');
 
       await modelApi.cancelTask(state.taskId);
 
@@ -166,11 +168,11 @@ export function useConversion(): UseConversionReturn {
         taskId: null,
       });
 
-      addLog('任务已取消');
+      addLog('Task cancelled');
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '取消任务失败';
+      const errorMessage = error instanceof Error ? error.message : t('errorTitle');
       updateState({ isCancelling: false });
-      addLog(`取消失败: ${errorMessage}`);
+      addLog(`Cancellation failed: ${errorMessage}`);
       throw error;
     }
   }, [state.taskId, updateState, addLog]);
@@ -179,14 +181,14 @@ export function useConversion(): UseConversionReturn {
     if (!state.taskId) return;
 
     try {
-      addLog('正在下载转换后的模型...');
+      addLog('Downloading converted model...');
       const blob = await modelApi.downloadModel(state.taskId);
       const filename = `converted_model_${state.taskId}.bin`;
       downloadFile(blob, filename);
-      addLog(`✅ 已下载: ${filename}`);
+      addLog(`✅ Downloaded: ${filename}`);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '下载失败';
-      addLog(`下载失败: ${errorMessage}`);
+      const errorMessage = error instanceof Error ? error.message : t('errorTitle');
+      addLog(`Download failed: ${errorMessage}`);
       throw error;
     }
   }, [state.taskId, addLog]);
