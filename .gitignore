@@ -24,6 +24,7 @@ MANIFEST
 .venv
 env/
 venv/
+venv-py*/
 ENV/
 env.bak/
 venv.bak/
