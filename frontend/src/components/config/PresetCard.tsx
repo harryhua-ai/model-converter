@@ -18,11 +18,19 @@ interface PresetCardProps {
 export function PresetCard({ preset, selected, onSelect }: PresetCardProps) {
   const cardClass = twMerge(
     clsx(
-      'relative p-6 rounded-lg border-2 cursor-pointer transition-all duration-200',
-      'hover:shadow-md',
+      'relative p-6 rounded-xl border-2 cursor-pointer transition-all duration-300 animate-fade-in',
       selected
-        ? 'border-primary bg-primary/5'
-        : 'border-gray-200 hover:border-primary/50'
+        ? 'border-primary-500 bg-gradient-to-br from-primary-50 to-accent-50 shadow-md hover:shadow-lg'
+        : 'border-gray-200 hover:border-primary-300 hover:scale-[1.02]'
+    )
+  );
+
+  const sizeBadgeClass = twMerge(
+    clsx(
+      'inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium transition-all duration-300',
+      selected
+        ? 'bg-gradient-to-r from-primary-500 to-primary-600 text-white shadow-md'
+        : 'bg-gray-100 hover:bg-primary-100'
     )
   );
 
@@ -30,8 +38,8 @@ export function PresetCard({ preset, selected, onSelect }: PresetCardProps) {
     <div onClick={onSelect} className={cardClass}>
       {/* Selection Indicator */}
       {selected && (
-        <div className="absolute top-4 right-4 text-primary">
-          <CheckCircle className="w-6 h-6" />
+        <div className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gradient-to-br from-success-500 to-success-600 shadow-lg flex items-center justify-center animate-scale-in">
+          <CheckCircle className="w-5 h-5 text-white" />
         </div>
       )}
 
@@ -40,9 +48,10 @@ export function PresetCard({ preset, selected, onSelect }: PresetCardProps) {
         {preset.name}
       </h3>
 
-      {/* Preset Size */}
+      {/* Preset Size Badge */}
       <div className="mb-3">
-        <span className="inline-block px-3 py-1 bg-primary/10 text-primary rounded-full text-sm font-medium">
+        <span className={sizeBadgeClass}>
+          <span className="w-2 h-2 rounded-full bg-current animate-pulse-slow" />
           {preset.size}x{preset.size}
         </span>
       </div>
@@ -52,10 +61,14 @@ export function PresetCard({ preset, selected, onSelect }: PresetCardProps) {
         {preset.description}
       </p>
 
-      {/* Selected Badge */}
+      {/* Selected Badge with Bottom Decoration */}
       {selected && (
-        <div className="mt-4 text-sm font-medium text-primary">
-          已选择
+        <div className="mt-4 animate-slide-up">
+          <div className="flex items-center gap-2 text-sm font-medium text-primary-600">
+            <div className="flex-1 h-0.5 bg-gradient-to-r from-primary-500 to-transparent" />
+            <span>已选择</span>
+            <div className="flex-1 h-0.5 bg-gradient-to-l from-primary-500 to-transparent" />
+          </div>
         </div>
       )}
     </div>

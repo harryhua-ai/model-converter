@@ -12,10 +12,12 @@ import time
 import json
 import os
 import shutil
+import yaml
 from pathlib import Path
-from typing import Callable, Dict, Any, Optional
+from typing import Callable, Dict, Any, Optional, List
 
 from .config import settings
+from .ne301_config import generate_ne301_json_config
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +217,8 @@ class DockerToolChainAdapter:
             ne301_project = self._prepare_ne301_project(
                 task_id,
                 quantized_tflite,
-                config
+                config,
+                yaml_path
             )
 
             # 步骤 4: NE301 打包 (70-100%)
@@ -361,11 +364,13 @@ class DockerToolChainAdapter:
         self,
         task_id: str,
         quantized_tflite: str,
-        config: Dict[str, Any]
+        config: Dict[str, Any],
+        yaml_path: Optional[str] = None
     ) -> Path:
-        """步骤 3: 准备 NE301 项目目录
+        """步骤 3: 准备 NE301 项目目录（改进版 - 完整 JSON 配置）
 
         参考 AIToolStack 的 ne301_export.py
+        使用 generate_ne301_json_config() 生成完整配置
         """
         logger.info("步骤 3: 准备 NE301 项目")
 
@@ -382,19 +387,37 @@ class DockerToolChainAdapter:
         tflite_target = model_dir / f"{model_name}.tflite"
         shutil.copy2(quantized_tflite, tflite_target)
 
-        # 生成 JSON 配置
-        json_config = {
-            "input_size": config["input_size"],
-            "num_classes": config["num_classes"],
-            "model_type": config["model_type"],
-            "quantization": config.get("quantization", "int8")
-        }
+        # 从 YAML 文件读取 class_names（如果提供）
+        class_names: List[str] = []
+        if yaml_path and Path(yaml_path).exists():
+            try:
+                with open(yaml_path, 'r') as f:
+                    yaml_data = yaml.safe_load(f)
 
+                # 从 YAML 中提取 class names
+                if 'classes' in yaml_data:
+                    class_names = [cls['name'] for cls in yaml_data['classes']]
+                    logger.info(f"✅ 从 YAML 文件读取到 {len(class_names)} 个类别")
+            except Exception as e:
+                logger.warning(f"⚠️  读取 YAML 文件失败: {e}，将使用空类别列表")
+
+        # ✅ 使用 AIToolStack 风格的完整 JSON 配置
+        json_config = generate_ne301_json_config(
+            tflite_path=Path(quantized_tflite),
+            model_name=model_name,
+            input_size=config["input_size"],
+            num_classes=config["num_classes"],
+            class_names=class_names,
+            confidence_threshold=config.get("confidence_threshold", 0.25),
+        )
+
+        # 写入 JSON 配置
         json_file = model_dir / f"{model_name}.json"
         with open(json_file, "w") as f:
             json.dump(json_config, f, indent=2)
 
         logger.info(f"✅ NE301 项目准备完成: {ne301_project}")
+        logger.info(f"✅ JSON 配置文件: {json_file}")
         return ne301_project
 
     def _build_ne301_model(

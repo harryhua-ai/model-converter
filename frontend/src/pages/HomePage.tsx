@@ -137,23 +137,29 @@ export default function HomePage() {
   const showDownload = conversionStatus === 'completed';
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50/30 to-purple-50/20 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800">
       {/* Header */}
       <header className="bg-white dark:bg-gray-800 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-                NE301 模型转换器
-              </h1>
-              <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-                将 PyTorch/ONNX 模型转换为 NE301 格式
-              </p>
+            <div className="flex items-center gap-4">
+              {/* Logo */}
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 shadow-lg flex items-center justify-center">
+                <span className="text-white font-bold text-lg">N</span>
+              </div>
+              <div>
+                <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 dark:from-white dark:to-gray-200 bg-clip-text text-transparent">
+                  NE301 模型转换器
+                </h1>
+                <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                  将 PyTorch/ONNX 模型转换为 NE301 格式
+                </p>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <div
-                className={`w-3 h-3 rounded-full ${
-                  isConnected ? 'bg-green-500' : 'bg-red-500'
+                className={`w-3 h-3 rounded-full animate-pulse-slow ${
+                  isConnected ? 'bg-success-500' : 'bg-error-500'
                 }`}
               />
               <span className="text-sm text-gray-600 dark:text-gray-400">
@@ -165,14 +171,14 @@ export default function HomePage() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Left Column: Upload and Configuration */}
           <div className="lg:col-span-2 space-y-6">
             {/* Step 1: Upload Model */}
-            <section className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+            <section className="card p-8 hover:shadow-card-hover transition-shadow duration-300">
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold">
+                <div className="step-indicator bg-gradient-to-br from-primary-500 to-primary-600">
                   1
                 </div>
                 <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
@@ -186,9 +192,9 @@ export default function HomePage() {
             </section>
 
             {/* Step 2: Upload YAML (Optional) */}
-            <section className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+            <section className="card p-8 hover:shadow-card-hover transition-shadow duration-300">
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold">
+                <div className="step-indicator bg-gradient-to-br from-primary-500 to-primary-600">
                   2
                 </div>
                 <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
@@ -203,9 +209,9 @@ export default function HomePage() {
             </section>
 
             {/* Step 2.5: Upload Calibration Dataset (Optional) */}
-            <section className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+            <section className="card p-8 hover:shadow-card-hover transition-shadow duration-300">
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-8 h-8 bg-orange-500 text-white rounded-full flex items-center justify-center font-bold">
+                <div className="step-indicator bg-gradient-to-br from-warning-500 to-warning-600">
                   2.5
                 </div>
                 <div>
@@ -221,16 +227,16 @@ export default function HomePage() {
                 onFileSelect={setSelectedCalibration}
               />
               {selectedCalibration && (
-                <div className="mt-3 text-sm text-green-600 dark:text-green-400">
+                <div className="mt-3 text-sm text-success-600 dark:text-success-400">
                   ✓ 已选择: {selectedCalibration.name} ({(selectedCalibration.size / 1024 / 1024).toFixed(2)}MB)
                 </div>
               )}
             </section>
 
             {/* Step 3: Select Preset */}
-            <section className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+            <section className="card p-8 hover:shadow-card-hover transition-shadow duration-300">
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold">
+                <div className="step-indicator bg-gradient-to-br from-primary-500 to-primary-600">
                   3
                 </div>
                 <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
@@ -261,7 +267,7 @@ export default function HomePage() {
                   onChange={(e) =>
                     setNumClasses(parseInt(e.currentTarget.value) || 80)
                   }
-                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-gray-700 dark:text-white"
                   disabled={state.isConverting}
                 />
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -271,13 +277,13 @@ export default function HomePage() {
             </section>
 
             {/* Action Buttons */}
-            <section className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+            <section className="card p-8 hover:shadow-card-hover transition-shadow duration-300">
               <div className="flex flex-wrap gap-4">
                 {canStart && (
                   <button
                     onClick={handleStartConversion}
                     disabled={!canStart}
-                    className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-semibold rounded-lg transition-colors"
+                    className="btn-primary"
                   >
                     <Play className="w-5 h-5" />
                     开始转换
@@ -294,7 +300,7 @@ export default function HomePage() {
                 {showDownload && (
                   <button
                     onClick={handleDownload}
-                    className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg transition-colors"
+                    className="btn-success"
                   >
                     <Download className="w-5 h-5" />
                     下载模型
@@ -304,7 +310,7 @@ export default function HomePage() {
                 {(conversionStatus !== 'idle' || state.logs.length > 0) && (
                   <button
                     onClick={handleReset}
-                    className="inline-flex items-center gap-2 px-6 py-3 bg-gray-600 hover:bg-gray-700 text-white font-semibold rounded-lg transition-colors"
+                    className="btn-secondary"
                   >
                     <RefreshCw className="w-5 h-5" />
                     重置
@@ -318,7 +324,7 @@ export default function HomePage() {
           <div className="space-y-6">
             {/* Progress Bar */}
             {state.isConverting && (
-              <section className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+              <section className="card p-8 hover:shadow-card-hover transition-shadow duration-300">
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
                   转换进度
                 </h3>
@@ -331,28 +337,30 @@ export default function HomePage() {
 
             {/* Error Message */}
             {state.error && (
-              <section className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+              <section className="bg-error-50 dark:bg-error-950/20 border-l-4 border-error-500 rounded-xl p-4 animate-slide-up">
                 <div className="flex items-start gap-3">
                   <div className="flex-shrink-0">
-                    <svg
-                      className="w-6 h-6 text-red-600 dark:text-red-400"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
+                    <div className="w-6 h-6 rounded-full bg-error-500 flex items-center justify-center">
+                      <svg
+                        className="w-4 h-4 text-white"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M6 18L18 6M6 6l12 12"
+                        />
+                      </svg>
+                    </div>
                   </div>
                   <div>
-                    <h4 className="text-sm font-semibold text-red-800 dark:text-red-400 mb-1">
+                    <h4 className="text-sm font-semibold text-error-800 dark:text-error-400 mb-1">
                       转换失败
                     </h4>
-                    <p className="text-sm text-red-700 dark:text-red-300">
+                    <p className="text-sm text-error-700 dark:text-error-300">
                       {state.error}
                     </p>
                   </div>
@@ -361,7 +369,7 @@ export default function HomePage() {
             )}
 
             {/* Log Terminal */}
-            <section className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+            <section className="card p-8 hover:shadow-card-hover transition-shadow duration-300">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                   转换日志
@@ -370,7 +378,7 @@ export default function HomePage() {
                   onClick={() => {
                     // 可以添加清空日志的功能
                   }}
-                  className="text-sm text-blue-600 hover:text-blue-700"
+                  className="text-sm text-primary-600 hover:text-primary-700"
                 >
                   <FileText className="w-4 h-4 inline mr-1" />
                   导出

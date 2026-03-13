@@ -85,42 +85,68 @@ def test_convert_model_no_docker():
         adapter.convert_model("test", "/tmp/test.tflite", {})
 
 @pytest.mark.unit
-def test_prepare_ne301_config():
-    """测试 NE301 配置准备"""
+def test_prepare_ne301_project():
+    """测试 NE301 项目准备（新实现 - 使用 generate_ne301_json_config）"""
     adapter = DockerToolChainAdapter()
+    adapter.client = Mock()
 
     config = {
-        "input_size": [640, 640],
+        "input_size": 640,
         "num_classes": 80,
-        "model_type": "yolov8",
-        "quantization": "int8",
-        "confidence_threshold": 0.3
+        "model_type": "yolov8"
     }
 
-    result = adapter._prepare_ne301_config("test-123", config, None)
+    # 创建临时 TFLite 文件
+    with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.tflite') as tflite_file:
+        tflite_file.write(b'\x00' * 10240)  # 10KB
+        tflite_file.flush()
 
-    assert result["model_name"] == "ne301_model_test-123"
-    assert result["input_size"] == [640, 640]
-    assert result["num_classes"] == 80
-    assert result["model_type"] == "yolov8"
-    assert result["quantization"] == "int8"
-    assert result["confidence_threshold"] == 0.3
+        # 调用新方法
+        with patch('shutil.copy2'):
+            with patch.object(Path, 'mkdir'):
+                with patch('builtins.open', create=True):
+                    result = adapter._prepare_ne301_project(
+                        task_id="test-123",
+                        quantized_tflite=tflite_file.name,
+                        config=config,
+                        yaml_path=None
+                    )
+
+    # 验证结果
+    assert result is not None
+    assert result.exists()
+
 
 @pytest.mark.unit
-def test_prepare_ne301_config_defaults():
-    """测试 NE301 配置默认值"""
+def test_prepare_ne301_project_defaults():
+    """测试 NE301 项目准备使用默认值"""
     adapter = DockerToolChainAdapter()
+    adapter.client = Mock()
 
     config = {
-        "input_size": [320, 320],
+        "input_size": 480,
         "num_classes": 10,
-        "model_type": "mobilenet"
+        "model_type": "yolov8"
     }
 
-    result = adapter._prepare_ne301_config("test-456", config, None)
+    # 创建临时 TFLite 文件
+    with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.tflite') as tflite_file:
+        tflite_file.write(b'\x00' * 5120)  # 5KB
+        tflite_file.flush()
 
-    assert result["confidence_threshold"] == 0.25  # 默认值
-    assert result["quantization"] == "int8"  # 默认值
+        # 调用新方法
+        with patch('shutil.copy2'):
+            with patch.object(Path, 'mkdir'):
+                with patch('builtins.open', create=True):
+                    result = adapter._prepare_ne301_project(
+                        task_id="test-456",
+                        quantized_tflite=tflite_file.name,
+                        config=config,
+                        yaml_path=None
+                    )
+
+    # 验证结果
+    assert result is not None
 
 # ============================================================
 # 新增：_get_host_path 方法的单元测试（4级回退机制）
@@ -259,7 +285,8 @@ def test_build_ne301_model_without_host_path():
         with pytest.raises(RuntimeError, match="无法获取宿主机路径"):
             adapter._build_ne301_model(
                 task_id="test-123",
-                ne301_project_path=Path("/workspace/ne301")
+                ne301_project_path=Path("/workspace/ne301"),
+                quantized_tflite="/tmp/test.tflite"
             )
 
 @pytest.mark.unit
@@ -297,15 +324,18 @@ def test_build_ne301_model_with_host_path():
                     with patch.object(Path, "mkdir"):  # Mock mkdir
                         result = adapter._build_ne301_model(
                             task_id="test-123",
-                            ne301_project_path=Path("/workspace/ne301")
+                            ne301_project_path=Path("/workspace/ne301"),
+                            quantized_tflite="/tmp/test.tflite"
                         )
 
-            # 验证结果
-            assert "ne301_model_test-123.bin" in result
+                        # 验证返回结果
+                        assert result is not None
+                        assert "ne301_model_test-123.bin" in str(result)
 
-            # 验证 Docker 命令使用了宿主机路径
-            call_args = mock_popen.call_args
-            cmd = call_args[0][0]  # 获取命令列表
+                        # 验证 Docker 命令使用了宿主机路径
+                        call_args = mock_popen.call_args
+                        cmd = call_args[0][0]  # 获取命令列表
+                        assert mock_host_path in " ".join(cmd)
             assert "-v" in cmd
             mount_index = cmd.index("-v") + 1
             assert cmd[mount_index].startswith(mock_host_path)

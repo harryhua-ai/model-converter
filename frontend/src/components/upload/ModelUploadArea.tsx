@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks';
-import { UploadCloud } from 'lucide-preact';
+import { UploadCloud, CheckCircle, AlertCircle } from 'lucide-preact';
 
 interface ModelUploadAreaProps {
   onFileSelect: (file: File) => void;
@@ -72,12 +72,12 @@ export default function ModelUploadArea({ onFileSelect, selectedFile }: ModelUpl
   };
 
   return (
-    <div>
+    <div className="animate-fade-in">
       <div
-        className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+        className={`upload-zone hover:scale-[1.02] transition-transform duration-200 ${
           isDragging
-            ? 'border-blue-500 bg-blue-50'
-            : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
+            ? 'border-primary-500 bg-primary-50 dark:bg-primary-950/20'
+            : 'border-gray-300 dark:border-gray-600'
         }`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -91,23 +91,49 @@ export default function ModelUploadArea({ onFileSelect, selectedFile }: ModelUpl
           className="hidden"
           onChange={handleFileInput}
         />
-        <UploadCloud className="mx-auto h-16 w-16 text-gray-400 mb-4" />
-        <p className="text-lg font-medium text-gray-700 mb-2">
+        <div
+          className={`mx-auto w-20 h-20 rounded-2xl bg-gradient-to-br flex items-center justify-center mb-4 transition-all duration-200 ${
+            isDragging
+              ? 'from-primary-500 to-primary-600 scale-110 shadow-glow'
+              : 'from-primary-100 to-accent-100 dark:from-primary-900/30 dark:to-accent-900/30'
+          }`}
+        >
+          <UploadCloud
+            className={`${
+              isDragging ? 'text-white' : 'text-primary-600 dark:text-primary-400'
+            }`}
+            size={32}
+          />
+        </div>
+        <p className="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">
           {selectedFile ? selectedFile.name : '拖拽文件到此处或点击上传'}
         </p>
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-gray-500 dark:text-gray-400">
           支持 .pt、.pth、.onnx 格式，最大 500MB
         </p>
         {selectedFile && (
-          <div className="mt-3 text-sm text-green-600">
-            ✓ 已选择: {selectedFile.name} ({(selectedFile.size / 1024 / 1024).toFixed(2)} MB)
+          <div className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-success-50 dark:bg-success-950/20 rounded-xl animate-scale-in">
+            <div className="w-5 h-5 rounded-full bg-success-500 flex items-center justify-center">
+              <CheckCircle className="w-3 h-3 text-white" />
+            </div>
+            <div className="text-sm text-success-700 dark:text-success-300">
+              <div className="font-medium">{selectedFile.name}</div>
+              <div className="text-xs text-success-600 dark:text-success-400">
+                {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+              </div>
+            </div>
           </div>
         )}
       </div>
 
       {error && (
-        <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-md">
-          <p className="text-sm text-red-600">{error}</p>
+        <div className="mt-3 border-l-4 border-error-500 bg-error-50 dark:bg-error-950/20 rounded-r-xl p-3 animate-slide-up">
+          <div className="flex items-start gap-2">
+            <div className="w-6 h-6 rounded-full bg-error-500 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <AlertCircle className="w-4 h-4 text-white" />
+            </div>
+            <p className="text-sm text-error-700 dark:text-error-300 flex-1">{error}</p>
+          </div>
         </div>
       )}
     </div>

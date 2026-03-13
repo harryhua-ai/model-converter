@@ -9,29 +9,71 @@ interface ProgressBarProps {
 export function ProgressBar({ progress, status, className }: ProgressBarProps) {
   const clampedProgress = Math.min(100, Math.max(0, progress));
 
+  // 定义步骤阈值
+  const steps = [
+    { label: '导出', threshold: 0 },
+    { label: '量化', threshold: 30 },
+    { label: '打包', threshold: 70 },
+    { label: '完成', threshold: 100 },
+  ];
+
   return (
     <div class={cn('w-full', className)}>
       <div class="flex items-center justify-between mb-2">
         <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
           转换进度
         </span>
-        <span class="text-sm font-semibold text-indigo-600 dark:text-indigo-400">
+        <span class="text-sm font-semibold text-primary-600 dark:text-primary-400">
           {clampedProgress}%
         </span>
       </div>
 
-      <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 overflow-hidden">
+      <div class="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-3 overflow-hidden relative">
         <div
           class={cn(
-            'h-full transition-all duration-300 ease-out rounded-full',
-            'bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500',
+            'h-full transition-all duration-300 ease-out rounded-full relative',
+            'bg-gradient-to-r from-primary-500 via-accent-500 to-primary-600',
             'shadow-lg'
           )}
           style={{ width: `${clampedProgress}%` }}
-        />
+        >
+          {/* 进度条高光 */}
+          <div class="absolute right-0 top-0 bottom-0 w-1 bg-white/50 blur-[2px]" />
+        </div>
       </div>
 
-      <div class="mt-2 text-xs text-gray-600 dark:text-gray-400 text-center">
+      {/* 步骤指示器 */}
+      <div class="flex items-center justify-between mt-4 px-2">
+        {steps.map((step) => {
+          const isActive = clampedProgress >= step.threshold;
+          const isCurrent = clampedProgress >= step.threshold && (step.threshold === 0 || clampedProgress < steps[steps.indexOf(step) + 1]?.threshold || 100);
+
+          return (
+            <div
+              key={step.label}
+              class={cn(
+                'flex flex-col items-center gap-1 transition-all duration-300',
+                isActive ? 'text-primary-600' : 'text-gray-400',
+                isCurrent && 'scale-110'
+              )}
+            >
+              <div
+                class={cn(
+                  'w-2 h-2 rounded-full transition-all duration-300',
+                  isCurrent
+                    ? 'bg-primary-500 scale-125 shadow-md shadow-primary-500/50'
+                    : isActive
+                    ? 'bg-primary-400'
+                    : 'bg-gray-300'
+                )}
+              />
+              <span class="text-xs font-medium">{step.label}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div class="mt-3 text-xs text-gray-600 dark:text-gray-400 text-center">
         {status}
       </div>
     </div>
