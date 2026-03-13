@@ -3,9 +3,9 @@ new_feature:
   triggers:
     - 添加
     - 实现
-    - 新建
-  priority: 1
-  strong_match: true
+    - 新增功能
+  priority: 30  # 中等优先级
+  strong_match: false
   agents:
     - planner
     - architect
@@ -18,18 +18,20 @@ new_feature:
     - B
     - E
     - F
-  estimated_time: 30-60分钟
+  estimated_time: "2h"
 
-bugfix:
+bug_fix:
   name: Bug修复
   triggers:
     - 修复
-    - 解决
-    - 修正
-  priority: 2
+    - fix
+    - bug
+    - 错误
+  priority: 20  # 高优先级
   strong_match: false
   agents:
-    - tdd-guide
+    - coordinator
+    - developer
     - code-reviewer
   skills:
     - testing
@@ -37,117 +39,123 @@ bugfix:
   closed_loops:
     - B
     - E
-  estimated_time: 15-45分钟
+  estimated_time: "30min"
 
 refactor:
   name: 代码重构
   triggers:
     - 重构
-    - 优化
-    - 简化
-    - 改进
-  priority: 3
-  strong_match: false
+    - 优化代码
+    - 改善结构
+  priority: 40
+  strong_match: true  # "重构"必须精确匹配
   agents:
-    - refactor-cleaner
-    - code-reviewer
     - architect
+    - developer
+    - code-reviewer
   skills:
     - python-patterns
     - typescript-patterns
+    - testing
   closed_loops:
     - B
     - F
-  estimated_time: 20-40分钟
+  estimated_time: "1-3h"
 
-performance:
+performance_optimization:
   name: 性能优化
   triggers:
     - 性能
-    - 加速
-    - 缓存
-    - 慢
-  priority: 4
+    - 优化速度
+    - 提升效率
+  priority: 50
   strong_match: false
   agents:
-    - architect
+    - developer
+    - performance-specialist
     - code-reviewer
   skills:
-    - performance
-  closed_loops:
-    - B
-    - E
-  estimated_time: 30-60分钟
-
-testing:
-  name: 测试开发
-  triggers:
-    - 测试
-    - 验证
-    - 校验
-    - 覆盖率
-  priority: 5
-  strong_match: false
-  agents:
-    - tdd-guide
-    - e2e-runner
-  skills:
+    - debugging
+    - profiling
     - testing
-    - python-testing
-    - typescript-testing
   closed_loops:
     - B
     - E
-  estimated_time: 20-50分钟
+  estimated_time: "2-6h"
 
 security_review:
   name: 安全审查
   triggers:
     - 安全
     - 漏洞
-    - 加密
-    - 紧急
-  priority: 6
+    - 安全审查
+  priority: 10  # 最高优先级
   strong_match: true
   agents:
     - security-reviewer
     - code-reviewer
+    - developer
   skills:
     - security
+    - security-scan
+    - debugging
   closed_loops:
-    - B
     - E
     - F
-  estimated_time: 20-30分钟
+  estimated_time: "1-2h"
+
+urgent_release:
+  name: 紧急发布
+  triggers:
+    - 紧急
+    - hotfix
+    - 立即发布
+  priority: 1  # 紧急
+  strong_match: false
+  agents:
+    - coordinator
+    - developer
+    - devops
+  skills:
+    - testing
+    - verification
+    - finishing-branch
+  closed_loops:
+    - B
+  estimated_time: "30min-1h"
 
 documentation:
   name: 文档更新
   triggers:
     - 文档
     - 说明
-    - 注释
-    - README
-  priority: 7
-  strong_match: false
+    - 更新文档
+  priority: 50
+  strong_match: true
   agents:
-    - doc-updater
-  skills: []
+    - planner
+    - documentation-specialist
+  skills:
+    - brainstorming
+    - writing-clearly
   closed_loops:
     - F
-  estimated_time: 10-20分钟
+  estimated_time: "1-2h"
 
 maintenance:
   name: 常规维护
   triggers:
-    - 查看
-    - 检查
-    - 状态
-    - 信息
-  priority: 8
+    - 更新
+    - 升级
+    - 维护
+  priority: 60  # 低优先级
   strong_match: false
-  agents: []
-  skills: []
+  agents:
+    - developer
+    - code-reviewer
+  skills:
+    - testing
+    - code-review
   closed_loops:
-    - F
-  estimated_time: 5-10分钟
-  default: true
+    - B
+  estimated_time: "30min-1h"
