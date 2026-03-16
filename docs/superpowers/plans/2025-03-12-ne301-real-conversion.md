@@ -32,8 +32,8 @@
 ## 📦 文件结构
 
 ### 新增文件
-- `backend/tools/tflite_quant.py` - ST 量化脚本
-- `backend/tools/user_config_quant.yaml` - 量化配置模板
+- `backend/tools/quantization/tflite_quant.py` - ST 量化脚本（已迁移到 quantization/ 子目录）
+- `backend/tools/quantization/user_config_quant.yaml` - 量化配置模板（已迁移到 quantization/ 子目录）
 - `backend/app/core/converter.py` - 转换核心逻辑
 - `backend/app/api/convert.py` - 修改为真实转换
 - `backend/requirements.txt` - 添加依赖
@@ -90,19 +90,19 @@ git commit -m "feat: 添加 NE301 转换所需的 Python 依赖"
 ### Task 2: 下载 ST 量化脚本
 
 **Files:**
-- Create: `backend/tools/tflite_quant.py`
-- Create: `backend/tools/user_config_quant.yaml`
+- Create: `backend/tools/quantization/tflite_quant.py`
+- Create: `backend/tools/quantization/user_config_quant.yaml`
 
 - [ ] **Step 1: 创建 tools 目录**
 
 ```bash
-mkdir -p backend/tools
+mkdir -p backend/tools/quantization
 ```
 
 - [ ] **Step 2: 下载量化脚本**
 
 ```bash
-cd backend/tools
+cd backend/tools/quantization
 curl -o tflite_quant.py https://raw.githubusercontent.com/STMicroelectronics/stm32ai-modelzoo-services/main/tutorials/scripts/yolov8_quantization/tflite_quant.py
 ```
 
@@ -116,7 +116,7 @@ Expected: 看到脚本头部，包含版权信息和导入语句
 
 - [ ] **Step 4: 创建配置文件**
 
-创建 `backend/tools/user_config_quant.yaml`：
+创建 `backend/tools/quantization/user_config_quant.yaml`：
 
 ```yaml
 # Model configuration
