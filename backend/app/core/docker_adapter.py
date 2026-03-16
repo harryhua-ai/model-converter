@@ -686,34 +686,16 @@ class DockerToolChainAdapter:
         # 1. 污染 NE301 SDK 源码，阻碍独立升级
         # 2. 多任务并发时 Makefile 冲突
         #
-        # ✅ 当前解决方案：
-        # - Makefile 默认 MODEL_NAME = yolov8n_256_quant_pc_uf_od_coco-person-st
-        # - 通过符号链接将用户模型映射到默认名称
-        # - 保持 SDK 源码干净，支持独立升级
-        #
-        # 🔄 未来优化方向：
-        # - 使用 Make 命令行参数传递配置（推荐）
-        # - 或使用独立工作目录，完全隔离任务
+        # ✅ 当前方案：使用 Make 命令行参数传递 MODEL_NAME
+        # - 代码简洁：移除符号链接操作（减少 15 行）
+        # - 并发安全：每个任务独立 MODEL_NAME，无文件冲突
+        # - 性能提升：减少文件系统操作开销
+        # - 零源码修改：保持 SDK Makefile 不变
 
-        logger.info(f"✅ 保持 SDK Makefile 不变（不修改源码）")
-
-        # 创建符号链接：将用户模型映射到 Makefile 默认名称
-        default_model_name = "yolov8n_256_quant_pc_uf_od_coco-person-st"
-        default_tflite = model_dir / f"{default_model_name}.tflite"
-        default_json = model_dir / f"{default_model_name}.json"
-
-        # 如果用户模型名称与默认名称不同，创建符号链接
-        if model_name != default_model_name:
-            # 删除旧的符号链接（如果存在）
-            if default_tflite.exists() or default_tflite.is_symlink():
-                default_tflite.unlink()
-            if default_json.exists() or default_json.is_symlink():
-                default_json.unlink()
-
-            # 创建新的符号链接
-            default_tflite.symlink_to(f"{model_name}.tflite")
-            default_json.symlink_to(f"{model_name}.json")
-            logger.info(f"✅ 创建符号链接: {default_model_name} -> {model_name}")
+        logger.info(f"✅ 模型文件已准备: {model_name}.tflite")
+        logger.info(f"✅ JSON 配置已生成: {model_name}.json")
+        logger.info(f"✅ 配置参数: input_size={config['input_size']}, num_classes={config['num_classes']}")
+        logger.info(f"✅ 保持 SDK Makefile 不变（通过命令行参数传递 MODEL_NAME）")
 
         # 返回 Model 目录路径（不是 workspace 根目录）
         model_project_dir = ne301_project / "Model"
@@ -745,6 +727,9 @@ class DockerToolChainAdapter:
         """
         logger.info(f"步骤 4: 调用 NE301 容器打包")
 
+        # 生成模型名称（与 _prepare_ne301_project 保持一致）
+        model_name = f"model_{task_id}"
+
         # 检测主机架构（仅用于日志记录）
         import platform
         host_arch = platform.machine()
@@ -759,7 +744,7 @@ class DockerToolChainAdapter:
 
         # 尝试 NE301 打包（无论架构如何）
         try:
-            return self._attempt_ne301_build(task_id, ne301_project_path, quantized_tflite)
+            return self._attempt_ne301_build(task_id, ne301_project_path, quantized_tflite, model_name)
         except RuntimeError as e:
             logger.error(f"❌ NE301 打包失败: {e}")
             logger.info("📦 提供量化 TFLite 作为备选输出...")
@@ -769,7 +754,8 @@ class DockerToolChainAdapter:
         self,
         task_id: str,
         ne301_project_path: Path,
-        quantized_tflite: str
+        quantized_tflite: str,
+        model_name: str
     ) -> str:
         """尝试 NE301 打包（支持版本检测和动态适配）
 
@@ -777,6 +763,7 @@ class DockerToolChainAdapter:
             task_id: 任务 ID
             ne301_project_path: NE301 项目路径
             quantized_tflite: 量化 TFLite 文件路径
+            model_name: 模型名称（用于 Make 命令行参数）
 
         Returns:
             最终输出文件路径（.bin 或 .tflite）
@@ -786,6 +773,7 @@ class DockerToolChainAdapter:
         """
         logger.info("📦 NE301 打包流程")
         logger.info(f"  项目路径: {ne301_project_path}")
+        logger.info(f"  模型名称: {model_name}")
 
         # 🔍 步骤1: 检测工具链版本和可用工具
         # 注意：工具链检测需要使用 SDK 根目录（不是 Model 子目录）
@@ -799,9 +787,9 @@ class DockerToolChainAdapter:
         try:
             # 执行对应的打包流程
             if packaging_method == 'ota':
-                return self._build_ota_package(task_id, ne301_project_path, toolchain)
+                return self._build_ota_package(task_id, ne301_project_path, toolchain, model_name)
             elif packaging_method == 'model':
-                return self._build_model_package(task_id, ne301_project_path, toolchain)
+                return self._build_model_package(task_id, ne301_project_path, toolchain, model_name)
             else:
                 return self._provide_fallback_output(task_id, quantized_tflite)
 
@@ -814,7 +802,8 @@ class DockerToolChainAdapter:
         self,
         task_id: str,
         ne301_project_path: Path,
-        toolchain
+        toolchain,
+        model_name: str
     ) -> str:
         """OTA 固件打包（推荐方式）
 
@@ -823,7 +812,7 @@ class DockerToolChainAdapter:
         logger.info("🎯 使用 OTA 固件打包（推荐）")
 
         # 执行 make pkg-model（已经包含 OTA header）
-        pkg_bin_path = self._make_model(task_id, ne301_project_path)
+        pkg_bin_path = self._make_model(task_id, ne301_project_path, model_name)
 
         # pkg-model 已经生成了带 OTA header 的固件，直接返回
         logger.info(f"✅ OTA 固件已生成: {pkg_bin_path.name}")
@@ -833,7 +822,8 @@ class DockerToolChainAdapter:
         self,
         task_id: str,
         ne301_project_path: Path,
-        toolchain
+        toolchain,
+        model_name: str
     ) -> str:
         """纯模型打包（备用方式）
 
@@ -842,12 +832,12 @@ class DockerToolChainAdapter:
         logger.info("🎯 使用纯模型打包（备用）")
 
         # 执行 make model
-        model_bin_path = self._make_model(task_id, ne301_project_path)
+        model_bin_path = self._make_model(task_id, ne301_project_path, model_name)
 
         # 直接返回模型包
         return model_bin_path
 
-    def _make_model(self, task_id: str, ne301_project_path: Path) -> Path:
+    def _make_model(self, task_id: str, ne301_project_path: Path, model_name: str = None) -> Path:
         """启动 NE301 容器执行 make 命令（安全加固版本）
 
         修复：CRITICAL-2026-003 - Docker 容器安全配置
@@ -855,6 +845,7 @@ class DockerToolChainAdapter:
         Args:
             task_id: 任务 ID
             ne301_project_path: NE301 项目路径
+            model_name: 模型名称（用于 Make 命令行参数）
 
         Returns:
             生成的 .bin 文件路径
@@ -862,8 +853,13 @@ class DockerToolChainAdapter:
         Raises:
             RuntimeError: 如果容器执行失败
         """
+        # 生成模型名称（如果未提供）
+        if not model_name:
+            model_name = f"model_{task_id}"
+
         logger.info(f"  项目路径: {ne301_project_path}")
         logger.info(f"  使用 NE301 镜像: {self.ne301_image}")
+        logger.info(f"  模型名称: {model_name}")
 
         # 关键修复：NE301 镜像的工作目录是 /workspace，所以挂载命名卷到 /workspace
         # 而不是子目录 /workspace/ne301
@@ -878,7 +874,12 @@ class DockerToolChainAdapter:
         # 关键修复：make pkg-model 必须在 SDK 根目录执行
         # 需要设置环境变量并加载 ST Edge AI 环境
         # 使用 bash -l 来确保加载 /etc/profile.d/ 中的脚本
-        make_cmd = "bash -lc 'cd /workspace && make pkg-model'"
+        #
+        # ✅ 优化：通过命令行参数传递 MODEL_NAME（移除符号链接）
+        # - 每个任务独立的 MODEL_NAME
+        # - 并发安全，无需文件锁
+        # - 性能提升，减少文件系统操作
+        make_cmd = f"bash -lc 'cd /workspace && make pkg-model MODEL_NAME={model_name}'"
 
         logger.info(f"  启动 NE301 容器: {container_name}")
         logger.info(f"  执行命令: {make_cmd}")
@@ -1274,63 +1275,6 @@ class DockerToolChainAdapter:
 
         logger.info(f"✅ NE301 打包成功: {final_output_path}")
         return str(final_output_path)
-
-    def _update_model_makefile(self, model_name: str) -> None:
-        """[已废弃] 更新 Model/Makefile 中的 MODEL_NAME 变量
-
-        ⚠️  此方法已废弃，不再使用。
-
-        废弃原因：
-        - 直接修改 NE301 SDK 源码会导致升级困难
-        - 多任务并发时会导致 Makefile 冲突
-        - 违反"零源码修改"原则
-
-        替代方案：
-        - 使用符号链接将用户模型映射到默认名称
-        - 或使用 Make 命令行参数传递配置
-
-        参考：NE301 打包环节优化计划 - 问题 1: 源码修改导致 SDK 升级困难
-
-        Args:
-            model_name: 模型名称（不含扩展名）
-        """
-        logger.warning("⚠️  _update_model_makefile() 已废弃，不应再调用此方法")
-        logger.warning("⚠️  当前使用符号链接方案替代源码修改")
-        # 保留实现仅供参考，但不再执行
-        return
-        import re
-
-        makefile_path = self.ne301_project_path / "Model" / "Makefile"
-
-        if not makefile_path.exists():
-            logger.warning(f"⚠️  Makefile 不存在: {makefile_path}")
-            return
-
-        try:
-            # 读取 Makefile 内容
-            with open(makefile_path, 'r') as f:
-                content = f.read()
-
-            # 替换 MODEL_NAME 行
-            pattern = r'^MODEL_NAME\s*=\s*.+$'
-            replacement = f'MODEL_NAME = {model_name}'
-
-            new_content = re.sub(
-                pattern,
-                replacement,
-                content,
-                flags=re.MULTILINE
-            )
-
-            # 写回 Makefile
-            with open(makefile_path, 'w') as f:
-                f.write(new_content)
-
-            logger.info(f"✅ Makefile 已更新: MODEL_NAME = {model_name}")
-
-        except Exception as e:
-            logger.error(f"❌ 更新 Makefile 失败: {e}")
-            # 不中断流程，继续执行
 
     def _provide_quantized_tflite_output(
         self,
