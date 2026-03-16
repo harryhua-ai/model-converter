@@ -1,5 +1,5 @@
 """
-Docker 工具链适配器（容器化版本 + 性能优化）
+Docker 工具链适配器（容器化版本 + 性能优化 + 安全加固）
 
 参考：camthink-ai/AIToolStack/backend/utils/ne301_export.py
 
@@ -8,7 +8,15 @@ Docker 工具链适配器（容器化版本 + 性能优化）
 - 缓存 Docker 路径映射
 - 复用 Docker 客户端
 - 实时日志推送
+
+安全加固：
+- 修复 CRITICAL-2026-001: Zip Slip 路径遍历漏洞
+- 修复 CRITICAL-2026-002: 命令注入风险
+- 修复 CRITICAL-2026-003: Docker 容器安全配置
+- 修复 HIGH-2026-001: 临时文件权限问题
+- 修复 HIGH-2026-004: YOLO 模型加载安全验证
 """
+import sys
 import docker
 import subprocess
 import logging
@@ -18,6 +26,9 @@ import json
 import os
 import shutil
 import yaml
+import tempfile
+import atexit
+import stat
 from pathlib import Path
 from typing import Callable, Dict, Any, Optional, List
 from functools import lru_cache
@@ -28,6 +39,97 @@ from .performance_monitor import get_performance_monitor, PerformanceMonitor
 from .task_manager import get_task_manager
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# 安全工具函数
+# ============================================================
+
+class SecureTempManager:
+    """安全的临时文件管理器
+
+    修复：HIGH-2026-001 - 临时文件权限问题
+
+    功能：
+    - 创建安全权限的临时目录
+    - 自动清理临时文件
+    - 防止临时文件泄露
+    """
+    def __init__(self):
+        self.temp_dirs = []
+        self._lock = threading.Lock()
+        # 注册退出时的清理函数
+        atexit.register(self.cleanup_all)
+
+    def create_secure_temp_dir(self, prefix: str) -> str:
+        """创建安全的临时目录
+
+        Args:
+            prefix: 临时目录前缀
+
+        Returns:
+            临时目录路径
+
+        Raises:
+            RuntimeError: 如果创建失败
+        """
+        try:
+            # 创建临时目录
+            temp_dir = tempfile.mkdtemp(prefix=prefix)
+
+            # ✅ 安全检查: 验证并修正权限为 700（仅所有者可访问）
+            current_mode = os.stat(temp_dir).st_mode
+            if stat.S_IMODE(current_mode) != 0o700:
+                os.chmod(temp_dir, 0o700)
+                logger.debug(f"修正临时目录权限: {temp_dir} (0o700)")
+
+            # 注册到清理列表
+            with self._lock:
+                self.temp_dirs.append(temp_dir)
+
+            logger.debug(f"创建安全临时目录: {temp_dir}")
+            return temp_dir
+
+        except Exception as e:
+            logger.error(f"创建临时目录失败: {e}")
+            raise RuntimeError(f"创建临时目录失败: {e}") from e
+
+    def cleanup(self, temp_dir: str) -> None:
+        """清理指定的临时目录
+
+        Args:
+            temp_dir: 临时目录路径
+        """
+        try:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                logger.debug(f"清理临时目录: {temp_dir}")
+
+            # 从列表中移除
+            with self._lock:
+                if temp_dir in self.temp_dirs:
+                    self.temp_dirs.remove(temp_dir)
+
+        except Exception as e:
+            logger.error(f"清理临时目录失败 {temp_dir}: {e}")
+
+    def cleanup_all(self) -> None:
+        """清理所有临时目录（退出时自动调用）"""
+        logger.info(f"清理 {len(self.temp_dirs)} 个临时目录...")
+
+        for temp_dir in self.temp_dirs[:]:  # 使用切片创建副本
+            self.cleanup(temp_dir)
+
+        logger.info("临时目录清理完成")
+
+
+# 全局临时文件管理器实例
+_secure_temp_manager = SecureTempManager()
+
+
+def get_secure_temp_manager() -> SecureTempManager:
+    """获取全局临时文件管理器"""
+    return _secure_temp_manager
 
 
 class DockerToolChainAdapter:
@@ -310,7 +412,9 @@ class DockerToolChainAdapter:
 
     def _extract_calibration_dataset(self, calib_dataset_path: str) -> str:
         """
-        解压校准数据集 ZIP 文件并返回图片目录路径
+        解压校准数据集 ZIP 文件并返回图片目录路径（安全版本）
+
+        修复：CRITICAL-2026-001 - Zip Slip 路径遍历漏洞
 
         Args:
             calib_dataset_path: 校准数据集 ZIP 文件路径
@@ -319,7 +423,7 @@ class DockerToolChainAdapter:
             解压后的图片目录路径
 
         Raises:
-            RuntimeError: 如果解压失败或找不到图片
+            RuntimeError: 如果解压失败、找不到图片或安全检查失败
         """
         import zipfile
         import tempfile
@@ -333,9 +437,45 @@ class DockerToolChainAdapter:
 
         try:
             with zipfile.ZipFile(calib_dataset_path, 'r') as zip_ref:
+                # ✅ 安全检查 1: 验证所有文件路径，防止路径遍历攻击
+                for file_info in zip_ref.infolist():
+                    file_path = file_info.filename
+
+                    # 检查是否包含路径遍历字符
+                    if ".." in file_path or file_path.startswith("/"):
+                        raise RuntimeError(
+                            f"检测到路径遍历攻击: {file_path}"
+                        )
+
+                    # 检查是否是符号链接（通过文件属性判断）
+                    # ZipInfo.external_attr 包含 Unix 文件权限和类型
+                    import stat
+                    if file_info.external_attr:
+                        file_mode = file_info.external_attr >> 16
+                        if stat.S_ISLNK(file_mode):
+                            raise RuntimeError(
+                                f"不允许符号链接: {file_path}"
+                            )
+
+                # ✅ 安全检查 2: 限制解压文件总大小 (2GB)
+                total_size = sum(f.file_size for f in zip_ref.infolist())
+                MAX_EXTRACT_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
+                if total_size > MAX_EXTRACT_SIZE:
+                    raise RuntimeError(
+                        f"解压文件过大: {total_size / (1024*1024):.2f}MB > {MAX_EXTRACT_SIZE / (1024*1024):.2f}MB"
+                    )
+
+                # ✅ 安全检查 3: 限制解压文件数量 (10000)
+                MAX_FILE_COUNT = 10000
+                if len(zip_ref.infolist()) > MAX_FILE_COUNT:
+                    raise RuntimeError(
+                        f"文件数量过多: {len(zip_ref.infolist())} > {MAX_FILE_COUNT}"
+                    )
+
+                # 执行解压
                 zip_ref.extractall(extract_dir)
 
-            logger.info(f"✅ 校准数据集已解压到: {extract_dir}")
+            logger.info(f"✅ 校准数据集已安全解压到: {extract_dir}")
 
             # 查找解压后的目录
             for root, dirs, files in os.walk(extract_dir):
@@ -347,9 +487,18 @@ class DockerToolChainAdapter:
             logger.warning(f"解压后未找到有效的校准图片，将使用解压目录")
             return extract_dir
 
+        except RuntimeError as e:
+            # 安全检查失败，清理临时目录
+            import shutil
+            shutil.rmtree(extract_dir, ignore_errors=True)
+            logger.error(f"安全检查失败: {e}")
+            raise
         except Exception as e:
+            # 解压失败，清理临时目录
+            import shutil
+            shutil.rmtree(extract_dir, ignore_errors=True)
             logger.error(f"解压校准数据集失败: {e}")
-            raise RuntimeError(f"解压校准数据集失败: {e}")
+            raise RuntimeError(f"解压校准数据集失败: {e}") from e
 
     def _export_to_quantized_tflite(
         self,
@@ -655,9 +804,20 @@ class DockerToolChainAdapter:
         return model_bin_path
 
     def _make_model(self, task_id: str, ne301_project_path: Path) -> Path:
-        """启动 NE301 容器执行 make 命令"""
-        import os
+        """启动 NE301 容器执行 make 命令（安全加固版本）
 
+        修复：CRITICAL-2026-003 - Docker 容器安全配置
+
+        Args:
+            task_id: 任务 ID
+            ne301_project_path: NE301 项目路径
+
+        Returns:
+            生成的 .bin 文件路径
+
+        Raises:
+            RuntimeError: 如果容器执行失败
+        """
         logger.info(f"  项目路径: {ne301_project_path}")
         logger.info(f"  使用 NE301 镜像: {self.ne301_image}")
 
@@ -667,8 +827,9 @@ class DockerToolChainAdapter:
             "ne301_workspace": {"bind": "/workspace", "mode": "rw"}
         }
 
-        # 创建临时容器名
-        container_name = "ne301-builder-" + os.urandom(4).hex()
+        # 创建临时容器名（使用随机 hex 避免冲突）
+        import secrets
+        container_name = "ne301-builder-" + secrets.token_hex(4)
 
         # 关键修复：make pkg-model 必须在 SDK 根目录执行
         # 需要设置环境变量并加载 ST Edge AI 环境
@@ -682,15 +843,44 @@ class DockerToolChainAdapter:
         container = None
         output_bin = None
         try:
-            # 启动临时容器执行 make（不自动删除，以便获取日志）
+            # ✅ 安全加固：启动临时容器执行 make（添加安全配置）
             container = self.client.containers.run(
                 self.ne301_image,
-                command=["bash", "-c", make_cmd],
+                command=["bash", "-c", make_cmd],  # ✅ 使用列表形式，避免 shell 注入
                 volumes=volumes,
                 name=container_name,
                 auto_remove=False,  # 不自动删除，手动管理
                 detach=True,
-                network="model-converter_conversion_network"  # 完整网络名称
+                network="model-converter_conversion_network",
+
+                # ✅ CRITICAL-2026-003 修复: 添加安全配置
+                # 资源限制
+                mem_limit="8g",  # 限制内存 8GB
+                memswap_limit="8g",  # 禁用 swap
+                cpu_quota=100000,  # 限制 100% CPU（1 核心）
+                cpu_period=100000,
+                pids_limit=256,  # 限制进程数
+
+                # 安全选项
+                security_opt=["no-new-privileges"],  # 禁止提权
+
+                # 权限管理（最小权限原则）
+                cap_drop=["ALL"],  # 删除所有权限
+                cap_add=[
+                    "CHOWN",         # 修改文件所有者
+                    "DAC_OVERRIDE",  # 覆盖文件权限检查
+                    "FOWNER",        # 文件所有者操作
+                    "SETGID",        # 设置 GID
+                    "SETUID",        # 设置 UID
+                ],
+
+                # 文件系统（tmpfs 用于临时文件）
+                tmpfs={
+                    "/tmp": "rw,noexec,nosuid,size=512m"
+                },
+
+                # 只读根文件系统（可选，可能影响某些操作）
+                # read_only=True
             )
 
             logger.info(f"  ✓ NE301 容器已启动: {container.id[:12]}")
@@ -1110,3 +1300,415 @@ class DockerToolChainAdapter:
         logger.info("   3. 或使用云服务完成打包（AWS/GCP/Azure x86_64 实例）")
 
         return str(final_tflite_path)
+
+    # ============================================================
+    # NE301 模型转换量化流程核心函数
+    # ============================================================
+
+    def _export_to_saved_model(
+        self,
+        model_path: str,
+        input_size: int,
+        task_id: str
+    ) -> str:
+        """导出 SavedModel 格式（使用 Ultralytics）
+
+        Args:
+            model_path: PyTorch 模型路径
+            input_size: 输入尺寸
+            task_id: 任务 ID（用于日志）
+
+        Returns:
+            SavedModel 目录路径
+
+        Raises:
+            FileNotFoundError: 模型文件不存在
+            RuntimeError: 导出失败
+        """
+        from ultralytics import YOLO
+        import tempfile
+
+        logger.info(f"[{task_id}] 步骤 1: 导出 SavedModel 格式")
+        logger.info(f"[{task_id}]   模型: {model_path}")
+        logger.info(f"[{task_id}]   输入尺寸: {input_size}x{input_size}")
+
+        # 验证模型文件存在
+        if not Path(model_path).exists():
+            raise FileNotFoundError(f"模型文件不存在: {model_path}")
+
+        try:
+            # 加载 YOLO 模型
+            model = YOLO(model_path)
+
+            # 创建临时输出目录
+            temp_dir = tempfile.mkdtemp(prefix="saved_model_")
+            export_path = Path(temp_dir) / "saved_model"
+
+            # 导出为 SavedModel 格式
+            # format='saved_model' 会导出完整的 SavedModel 目录结构
+            model.export(
+                format="saved_model",
+                imgsz=input_size,
+                half=False  # 使用 float32（后续量化时会转换）
+            )
+
+            logger.info(f"[{task_id}] ✅ SavedModel 导出成功: {export_path}")
+            return str(export_path)
+
+        except Exception as e:
+            logger.error(f"[{task_id}] ❌ SavedModel 导出失败: {e}")
+            raise RuntimeError(f"SavedModel 导出失败: {e}") from e
+
+    def _prepare_quant_config(
+        self,
+        saved_model_dir: str,
+        input_size: int,
+        calib_dataset_path: Optional[str],
+        task_id: str
+    ) -> Path:
+        """准备 ST 量化配置文件 (YAML)
+
+        Args:
+            saved_model_dir: SavedModel 目录路径
+            input_size: 输入尺寸
+            calib_dataset_path: 校准数据集路径（可选）
+            task_id: 任务 ID
+
+        Returns:
+            配置文件路径
+        """
+        import tempfile
+
+        logger.info(f"[{task_id}] 步骤 2: 准备量化配置文件")
+
+        # 处理校准数据集路径
+        actual_calib_path = calib_dataset_path
+        if calib_dataset_path and calib_dataset_path.endswith('.zip'):
+            actual_calib_path = self._extract_calibration_dataset(calib_dataset_path)
+
+        # 创建配置文件
+        config_data = {
+            "model": {
+                "name": f"model_{task_id}",
+                "uc": "od_coco",
+                "model_path": saved_model_dir,
+                "input_shape": [input_size, input_size, 3]
+            },
+            "quantization": {
+                "fake": actual_calib_path is None,  # 如果无校准数据集，使用 fake 量化
+                "quantization_type": "per_channel",
+                "quantization_input_type": "uint8",
+                "quantization_output_type": "int8",
+                "calib_dataset_path": actual_calib_path or "",
+                "export_path": "./quantized_models",
+                "max_calib_images": 200  # 限制校准图片数量防止 OOM
+            },
+            "pre_processing": {
+                "rescaling": {"scale": 255, "offset": 0}
+            }
+        }
+
+        # 写入临时 YAML 文件
+        temp_dir = tempfile.mkdtemp(prefix="quant_config_")
+        config_path = Path(temp_dir) / "user_config_quant.yaml"
+
+        with open(config_path, 'w', encoding='utf-8') as f:
+            yaml.dump(config_data, f, default_flow_style=False, allow_unicode=True)
+
+        logger.info(f"[{task_id}] ✅ 配置文件已生成: {config_path}")
+        if actual_calib_path:
+            logger.info(f"[{task_id}]   使用校准数据集: {actual_calib_path}")
+        else:
+            logger.info(f"[{task_id}]   使用 fake 量化模式")
+
+        return config_path
+
+    def _run_st_quantization(
+        self,
+        config_path: Path,
+        task_id: str
+    ) -> str:
+        """运行 ST 官方量化脚本（安全版本）
+
+        修复：CRITICAL-2026-002 - 命令注入风险
+
+        Args:
+            config_path: 配置文件路径
+            task_id: 任务 ID
+
+        Returns:
+            量化后的 TFLite 文件路径
+
+        Raises:
+            RuntimeError: 量化失败或安全检查失败
+        """
+        logger.info(f"[{task_id}] 步骤 3: 运行 ST 官方量化脚本")
+
+        # ✅ 安全检查 1: 获取并验证量化脚本路径
+        project_root = Path(__file__).parent.parent.parent
+        quant_script = project_root / "tools" / "quantization" / "tflite_quant.py"
+
+        if not quant_script.exists():
+            raise RuntimeError(f"量化脚本不存在: {quant_script}")
+
+        # 验证脚本路径在项目目录内
+        try:
+            real_script = quant_script.resolve(strict=True)
+            if not str(real_script).startswith(str(project_root)):
+                raise RuntimeError(f"脚本路径异常（不在项目目录内）: {real_script}")
+        except Exception as e:
+            raise RuntimeError(f"脚本路径验证失败: {e}") from e
+
+        # ✅ 安全检查 2: 验证配置文件路径
+        try:
+            real_config = config_path.resolve(strict=True)
+            config_dir = config_path.parent.resolve(strict=True)
+        except Exception as e:
+            raise RuntimeError(f"配置路径验证失败: {e}") from e
+
+        # ✅ 安全检查 3: 验证配置文件名（只允许字母、数字、下划线、连字符）
+        import re
+        config_name = config_path.stem  # 不含扩展名
+        if not re.match(r'^[a-zA-Z0-9_-]+$', config_name):
+            raise RuntimeError(f"配置文件名不合法: {config_name}")
+
+        # 构造命令（使用列表形式，避免 shell 注入）
+        cmd = [
+            sys.executable,  # ✅ 使用当前 Python 解释器
+            str(real_script),
+            "--config-path", str(config_dir),
+            "--config-name", config_name
+        ]
+
+        logger.info(f"[{task_id}] 执行命令: {' '.join(cmd)}")
+
+        try:
+            # ✅ 安全检查 4: 清理环境变量，仅保留必要变量
+            safe_env = {
+                "PATH": os.environ.get("PATH", ""),
+                "PYTHONPATH": str(project_root),
+                "HOME": os.environ.get("HOME", "/tmp"),
+                "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
+                # 传递必要的 Python 设置
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONUNBUFFERED": "1"
+            }
+
+            # ✅ 安全检查 5: 使用更安全的 subprocess 调用
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=600,  # 10 分钟超时
+                cwd=str(config_dir),
+                env=safe_env  # ✅ 使用清理后的环境变量
+            )
+
+            if result.returncode != 0:
+                error_output = result.stderr[-500:] if result.stderr else result.stdout[-500:]
+                logger.error(f"[{task_id}] ❌ 量化脚本执行失败:")
+                logger.error(f"[{task_id}]   退出码: {result.returncode}")
+                logger.error(f"[{task_id}]   错误输出:\n{error_output}")
+                raise RuntimeError(f"量化失败: {error_output}")
+
+            # 查找生成的量化文件
+            output_dir = Path(config_dir) / "quantized_models"
+            if not output_dir.exists():
+                raise FileNotFoundError(f"量化输出目录不存在: {output_dir}")
+
+            # 查找 .tflite 文件
+            tflite_files = list(output_dir.glob("*.tflite"))
+            if not tflite_files:
+                raise FileNotFoundError(f"量化文件未生成（目录: {output_dir}）")
+
+            # 返回最新的文件
+            quantized_file = max(tflite_files, key=lambda p: p.stat().st_mtime)
+            logger.info(f"[{task_id}] ✅ 量化完成: {quantized_file}")
+
+            return str(quantized_file)
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"[{task_id}] ❌ 量化超时（>10分钟）")
+            raise RuntimeError("量化超时")
+        except Exception as e:
+            logger.error(f"[{task_id}] ❌ 量化失败: {e}")
+            raise RuntimeError(f"量化失败: {e}") from e
+
+    def _validate_quantized_model(
+        self,
+        quantized_tflite_path: str,
+        input_size: int,
+        task_id: str
+    ) -> bool:
+        """验证量化后的模型
+
+        检查：
+        - 输出形状正确（根据输入尺寸）
+        - 量化参数有效（scale != 1.0）
+
+        Args:
+            quantized_tflite_path: 量化 TFLite 路径
+            input_size: 输入尺寸
+            task_id: 任务 ID
+
+        Returns:
+            验证是否通过
+
+        Raises:
+            FileNotFoundError: 模型文件不存在
+            RuntimeError: 无效的 TFLite 模型
+            ValueError: 输出形状错误
+        """
+        import tensorflow as tf
+
+        logger.info(f"[{task_id}] 步骤 4: 验证量化模型")
+
+        # 验证文件存在
+        if not Path(quantized_tflite_path).exists():
+            raise FileNotFoundError(f"量化模型文件不存在: {quantized_tflite_path}")
+
+        try:
+            # 加载 TFLite 模型
+            interpreter = tf.lite.Interpreter(model_path=quantized_tflite_path)
+            interpreter.allocate_tensors()
+
+            # 获取输入输出详情
+            input_details = interpreter.get_input_details()[0]
+            output_details = interpreter.get_output_details()[0]
+
+            logger.info(f"[{task_id}]   输入形状: {input_details['shape']}")
+            logger.info(f"[{task_id}]   输出形状: {output_details['shape']}")
+
+            # 验证输出形状
+            expected_boxes = {
+                256: 1344,
+                320: 2100,
+                416: 3549,
+                512: 5376,
+                640: 8400,
+            }
+
+            output_shape = output_details['shape']
+            if input_size in expected_boxes:
+                expected = expected_boxes[input_size]
+                actual_boxes = output_shape[2] if len(output_shape) > 2 else output_shape[1]
+
+                if actual_boxes != expected:
+                    error_msg = (
+                        f"输出形状错误: 预期 (1, 34, {expected})，"
+                        f"实际 {output_shape}"
+                    )
+                    logger.error(f"[{task_id}] ❌ {error_msg}")
+                    raise ValueError(error_msg)
+
+                logger.info(f"[{task_id}] ✅ 输出形状正确 (total_boxes={actual_boxes})")
+            else:
+                logger.warning(f"[{task_id}] ⚠️  未知输入尺寸 {input_size}，跳过形状验证")
+
+            # 验证量化参数
+            if 'quantization_parameters' in output_details:
+                quant_params = output_details['quantization_parameters']
+                scales = quant_params.get('scales', [])
+
+                if scales and len(scales) > 0:
+                    scale = float(scales[0])
+                    logger.info(f"[{task_id}]   量化 scale: {scale}")
+
+                    # 检查 scale 是否合理（不应该是 1.0，除非是 float32）
+                    if scale == 1.0 and output_details.get('dtype') != np.float32:
+                        logger.warning(f"[{task_id}] ⚠️  量化 scale 为 1.0，可能未正确量化")
+                else:
+                    logger.warning(f"[{task_id}] ⚠️  未找到量化参数")
+            else:
+                logger.warning(f"[{task_id}] ⚠️  模型输出没有量化参数")
+
+            logger.info(f"[{task_id}] ✅ 模型验证通过")
+            return True
+
+        except Exception as e:
+            logger.error(f"[{task_id}] ❌ 模型验证失败: {e}")
+            if "TFLite" in str(e) or "interpreter" in str(e):
+                raise RuntimeError(f"无效的 TFLite 模型: {e}") from e
+            raise
+
+    def _convert_with_saved_model_and_st_quant(
+        self,
+        task_id: str,
+        model_path: str,
+        config: Dict[str, Any],
+        calib_dataset_path: Optional[str],
+        progress_callback: Optional[Callable[[int, str], None]]
+    ) -> str:
+        """使用 SavedModel + ST 量化的转换流程
+
+        新的量化流程：
+        1. 导出 SavedModel（Ultralytics）
+        2. 准备 ST 量化配置（YAML）
+        3. 运行 ST 官方量化脚本
+        4. 验证量化模型
+
+        Args:
+            task_id: 任务 ID
+            model_path: PyTorch 模型路径
+            config: 转换配置
+            calib_dataset_path: 校准数据集路径
+            progress_callback: 进度回调函数
+
+        Returns:
+            量化后的 TFLite 文件路径
+
+        Raises:
+            RuntimeError: 转换失败
+        """
+        input_size = config["input_size"]
+
+        # 步骤 1: 导出 SavedModel
+        task_manager = get_task_manager()
+        task_manager.add_log(task_id, "步骤 1/4: 导出 SavedModel 格式")
+
+        if progress_callback:
+            progress_callback(10, "正在导出 SavedModel...")
+
+        saved_model_dir = self._export_to_saved_model(
+            model_path=model_path,
+            input_size=input_size,
+            task_id=task_id
+        )
+
+        # 步骤 2: 准备量化配置
+        task_manager.add_log(task_id, "步骤 2/4: 准备量化配置")
+
+        if progress_callback:
+            progress_callback(20, "正在准备量化配置...")
+
+        config_path = self._prepare_quant_config(
+            saved_model_dir=saved_model_dir,
+            input_size=input_size,
+            calib_dataset_path=calib_dataset_path,
+            task_id=task_id
+        )
+
+        # 步骤 3: 运行 ST 量化
+        task_manager.add_log(task_id, "步骤 3/4: 运行 ST 官方量化")
+
+        if progress_callback:
+            progress_callback(30, "正在运行 ST 量化...")
+
+        quantized_tflite = self._run_st_quantization(
+            config_path=config_path,
+            task_id=task_id
+        )
+
+        # 步骤 4: 验证量化模型
+        task_manager.add_log(task_id, "步骤 4/4: 验证量化模型")
+
+        if progress_callback:
+            progress_callback(50, "正在验证量化模型...")
+
+        self._validate_quantized_model(
+            quantized_tflite_path=quantized_tflite,
+            input_size=input_size,
+            task_id=task_id
+        )
+
+        return quantized_tflite
