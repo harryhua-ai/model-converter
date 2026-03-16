@@ -13,7 +13,6 @@ import docker
 import subprocess
 import logging
 import threading
-import queue
 import time
 import json
 import os
