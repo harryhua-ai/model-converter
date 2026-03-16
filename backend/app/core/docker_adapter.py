@@ -244,36 +244,23 @@ class DockerToolChainAdapter:
 
             model_size = Path(model_path).stat().st_size if Path(model_path).exists() else 0
 
-            # 步骤 1: PyTorch → TFLite (0-30%)
-            task_manager.add_log(task_id, "步骤 1/4: 导出 TFLite 模型")
-            with self.performance_monitor.measure_step(task_id, "export_tflite"):
+            # ✅ 步骤 1+2: PyTorch → 量化 TFLite (0-60%) - 使用直接导出方法
+            task_manager.add_log(task_id, "步骤 1/3: 导出量化 TFLite 模型")
+            with self.performance_monitor.measure_step(task_id, "export_quantized_tflite"):
                 if progress_callback:
-                    progress_callback(10, "正在导出 TFLite 模型...")
+                    progress_callback(10, "正在导出量化 TFLite 模型...")
 
-                tflite_path = self._export_tflite(
+                quantized_tflite = self._export_to_quantized_tflite(
                     model_path,
-                    config["input_size"]
-                )
-                logger.info(f"✅ TFLite 导出成功: {tflite_path}")
-                task_manager.add_log(task_id, f"✅ TFLite 导出完成: {Path(tflite_path).name}")
-
-            # 步骤 2: TFLite → 量化 TFLite (30-60%)
-            task_manager.add_log(task_id, "步骤 2/4: 量化模型 (int8)")
-            with self.performance_monitor.measure_step(task_id, "quantize_tflite"):
-                if progress_callback:
-                    progress_callback(35, "正在量化模型...")
-
-                quantized_tflite = self._quantize_tflite(
-                    tflite_path,
                     config["input_size"],
                     calib_dataset_path,
                     config
                 )
-                logger.info(f"✅ 量化成功: {quantized_tflite}")
-                task_manager.add_log(task_id, f"✅ 量化完成: {Path(quantized_tflite).name}")
+                logger.info(f"✅ 量化 TFLite 导出成功: {quantized_tflite}")
+                task_manager.add_log(task_id, f"✅ 量化 TFLite 导出完成: {Path(quantized_tflite).name}")
 
             # 步骤 3: 准备 NE301 项目 (60-70%)
-            task_manager.add_log(task_id, "步骤 3/4: 准备 NE301 项目")
+            task_manager.add_log(task_id, "步骤 2/3: 准备 NE301 项目")
             with self.performance_monitor.measure_step(task_id, "prepare_ne301"):
                 if progress_callback:
                     progress_callback(70, "正在准备 NE301 项目...")
@@ -287,7 +274,7 @@ class DockerToolChainAdapter:
                 task_manager.add_log(task_id, "✅ NE301 项目准备完成")
 
             # 步骤 4: NE301 打包 (70-100%)
-            task_manager.add_log(task_id, "步骤 4/4: NE301 打包")
+            task_manager.add_log(task_id, "步骤 3/3: NE301 打包")
             with self.performance_monitor.measure_step(task_id, "build_ne301"):
                 if progress_callback:
                     progress_callback(75, "正在生成 NE301 部署包...")
@@ -322,40 +309,20 @@ class DockerToolChainAdapter:
             self.performance_monitor.end_task(task_id, success=False)
             raise
 
-    def _export_tflite(self, model_path: str, input_size: int) -> str:
-        """步骤 1: PyTorch → SavedModel（用于后续量化）
-
-        注意：ST量化脚本需要 SavedModel 格式，不是 TFLite 文件
-        """
-        from ultralytics import YOLO
-
-        logger.info(f"步骤 1: 导出 {model_path} 为 SavedModel 格式（用于量化）")
-
-        model = YOLO(model_path)
-
-        # 导出为 SavedModel 格式（量化脚本需要）
-        saved_model_path = model.export(format="saved_model", imgsz=input_size, int8=False)
-
-        # YOLO export() 返回 SavedModel 目录路径
-        if isinstance(saved_model_path, str) and Path(saved_model_path).exists():
-            logger.info(f"✅ SavedModel 导出成功: {saved_model_path}")
-            return saved_model_path
-        else:
-            raise FileNotFoundError(f"SavedModel 导出失败：目录未生成 ({saved_model_path})")
-
-    def _quantize_tflite(
+    def _export_to_quantized_tflite(
         self,
-        saved_model_path: str,  # ← SavedModel 目录路径，不是 TFLite 文件
+        model_path: str,
         input_size: int,
         calib_dataset_path: Optional[str],
         config: Dict[str, Any]
     ) -> str:
-        """步骤 2: SavedModel → 量化 TFLite
+        """步骤 1+2: PyTorch → 量化 TFLite（推荐方法）
 
-        使用 ST 官方量化脚本，需要 SavedModel 目录作为输入
+        直接使用 YOLOv8 的 int8 量化导出，跳过 SavedModel 步骤
+        避免输出形状错误问题（SavedModel 会输出 8400 boxes 而不是 1344）
 
         Args:
-            saved_model_path: SavedModel 目录路径（不是 .tflite 文件）
+            model_path: PyTorch 模型路径
             input_size: 模型输入尺寸
             calib_dataset_path: 校准数据集路径（可选）
             config: 转换配置
@@ -363,19 +330,21 @@ class DockerToolChainAdapter:
         Returns:
             str: 量化后的 TFLite 文件路径
         """
-        logger.info(f"步骤 2: 使用 SavedModel 进行量化: {saved_model_path}")
-
+        from ultralytics import YOLO
+        import tensorflow as tf
         import tempfile
-        import yaml
-        import zipfile
-        from omegaconf import OmegaConf, DictConfig
 
-        # 处理校准数据集：如果是 ZIP 文件，需要解压
-        actual_calib_path = calib_dataset_path or ""
+        logger.info(f"步骤 1+2: 直接导出量化 TFLite（推荐方法）")
+        logger.info(f"  模型: {model_path}")
+        logger.info(f"  输入尺寸: {input_size}x{input_size}")
+        logger.info(f"  量化类型: int8")
+
+        # 处理校准数据集
+        actual_calib_path = calib_dataset_path
         if calib_dataset_path and calib_dataset_path.endswith('.zip'):
             logger.info(f"检测到校准数据集是 ZIP 文件，正在解压...")
+            import zipfile
 
-            # 创建临时目录
             extract_dir = tempfile.mkdtemp(prefix="calibration_")
 
             try:
@@ -384,8 +353,7 @@ class DockerToolChainAdapter:
 
                 logger.info(f"✅ 校准数据集已解压到: {extract_dir}")
 
-                # 查找解压后的目录（可能包含子目录）
-                # 优先使用包含图片文件的直接目录
+                # 查找解压后的目录
                 for root, dirs, files in os.walk(extract_dir):
                     image_files = [f for f in files if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
                     if image_files:
@@ -394,65 +362,73 @@ class DockerToolChainAdapter:
                         break
 
                 if not actual_calib_path or actual_calib_path == calib_dataset_path:
-                    logger.error(f"解压后未找到有效的校准图片")
+                    logger.warning(f"解压后未找到有效的校准图片，将使用空路径")
                     actual_calib_path = extract_dir
             except Exception as e:
                 logger.error(f"解压校准数据集失败: {e}")
                 raise RuntimeError(f"解压校准数据集失败: {e}")
 
-        # 准备 Hydra 配置
-        hydra_config = {
-            "model": {
-                "model_path": str(Path(saved_model_path).resolve()),  # ← SavedModel 目录
-                "input_shape": [input_size, input_size, 3]
-            },
-            "quantization": {
-                "calib_dataset_path": actual_calib_path,
-                "export_path": "/app/outputs",
-                "fake": not bool(actual_calib_path)  # 如果没有校准数据集，使用 fake quantization
-            }
+        # 加载 YOLOv8 模型
+        model = YOLO(model_path)
+
+        # ✅ 直接导出量化 TFLite
+        export_args = {
+            "format": "tflite",
+            "imgsz": input_size,
+            "int8": True,  # int8 量化
         }
 
-        # 写入临时配置文件
-        config_file = tempfile.mktemp(suffix=".yaml", prefix="quant_config_")
-        with open(config_file, "w") as f:
-            yaml.dump(hydra_config, f)
+        # 如果有校准数据集，传递 data 参数
+        if actual_calib_path and Path(actual_calib_path).exists():
+            export_args["data"] = actual_calib_path
+            logger.info(f"  使用校准数据集: {actual_calib_path}")
+        else:
+            logger.info(f"  无校准数据集，使用 fake quantization")
 
-        # 执行量化脚本
-        # 修复：当前工作目录是 /app，Python 模块路径从 tools 开始
-        cmd = [
-            "python", "-m", "tools.quantization.tflite_quant",
-            "--config-name", "user_config_quant",
-            f"model.model_path={hydra_config['model']['model_path']}",
-            f"model.input_shape=[{input_size},{input_size},3]",
-            f"quantization.calib_dataset_path={hydra_config['quantization']['calib_dataset_path']}",
-            f"quantization.export_path={hydra_config['quantization']['export_path']}"
-        ]
+        # 执行导出
+        tflite_path = model.export(**export_args)
 
-        logger.info(f"执行量化命令: {' '.join(cmd)}")
+        # 验证输出形状
+        logger.info(f"✅ 量化 TFLite 导出成功: {tflite_path}")
 
-        # 设置环境变量以获取详细错误信息
-        env = os.environ.copy()
-        env["HYDRA_FULL_ERROR"] = "1"
+        try:
+            interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
+            output_details = interpreter.get_output_details()[0]
+            output_shape = output_details['shape']
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=600,
-            env=env
-        )
+            logger.info(f"  输出形状: {output_shape}")
 
-        if result.returncode != 0:
-            logger.error(f"量化失败: {result.stderr}")
-            raise RuntimeError(f"TFLite 量化失败: {result.stderr}")
+            # 计算预期的 total_boxes
+            expected_boxes = {
+                256: 1344,  # 3 * (32*32 + 16*16 + 8*8)
+                320: 2100,
+                416: 3549,
+                512: 5376,
+                640: 8400,
+            }
 
-        # 查找量化后的模型
-        quantized_files = list(Path("/app/outputs").glob("*.tflite"))
-        if not quantized_files:
-            raise FileNotFoundError("量化后的模型文件未找到")
+            expected = expected_boxes.get(input_size)
+            if expected:
+                actual_boxes = output_shape[2] if len(output_shape) > 2 else output_shape[1]
 
-        return str(quantized_files[0])
+                if actual_boxes == expected:
+                    logger.info(f"✅ 输出形状正确: {output_shape} (total_boxes={actual_boxes})")
+                else:
+                    logger.error(f"❌ 输出形状错误！")
+                    logger.error(f"  预期: (1, 34, {expected})")
+                    logger.error(f"  实际: {output_shape}")
+                    raise ValueError(
+                        f"输出形状错误: {output_shape} != (1, 34, {expected})。"
+                        f"这会导致固件大小过大。"
+                    )
+            else:
+                logger.warning(f"无法验证输出形状（未知输入尺寸: {input_size}）")
+
+        except Exception as e:
+            logger.warning(f"⚠️  无法验证输出形状: {e}")
+            logger.warning("继续处理，但建议手动检查 TFLite 模型输出")
+
+        return str(tflite_path)
 
     def _prepare_ne301_project(
         self,
@@ -637,11 +613,12 @@ class DockerToolChainAdapter:
         """
         logger.info("🎯 使用 OTA 固件打包（推荐）")
 
-        # 步骤1: 执行 make model
-        model_bin_path = self._make_model(task_id, ne301_project_path)
+        # 执行 make pkg-model（已经包含 OTA header）
+        pkg_bin_path = self._make_model(task_id, ne301_project_path)
 
-        # 步骤2: 添加 OTA 固件头部
-        return self._add_ota_header(task_id, ne301_project_path, toolchain, model_bin_path)
+        # pkg-model 已经生成了带 OTA header 的固件，直接返回
+        logger.info(f"✅ OTA 固件已生成: {pkg_bin_path.name}")
+        return str(pkg_bin_path)
 
     def _build_model_package(
         self,
@@ -662,26 +639,6 @@ class DockerToolChainAdapter:
         return model_bin_path
 
     def _make_model(self, task_id: str, ne301_project_path: Path) -> Path:
-        """执行 make model（在 NE301 容器内）"""
-        logger.info("步骤 1: 执行 make model")
-
-        # 输出路径
-        model_bin_path = ne301_project_path / "build" / "ne301_Model.bin"
-
-        # 在 NE301 容器内执行 make
-        logger.info("📦 调用 NE301 容器执行 make...")
-        self._run_make_in_ne301_container(ne301_project_path)
-
-        # 验证输出文件
-        if not model_bin_path.exists():
-            raise RuntimeError(f"❌ make model 失败，输出文件不存在: {model_bin_path}")
-
-        file_size = model_bin_path.stat().st_size
-        logger.info(f"✅ 模型编译成功: {model_bin_path.name} ({file_size} bytes)")
-
-        return model_bin_path
-
-    def _run_make_in_ne301_container(self, ne301_project_path: Path) -> None:
         """启动 NE301 容器执行 make 命令"""
         import os
 
@@ -697,15 +654,17 @@ class DockerToolChainAdapter:
         # 创建临时容器名
         container_name = "ne301-builder-" + os.urandom(4).hex()
 
-        # 关键修复：make model 必须在 SDK 根目录执行，不是 Model 子目录
-        # SDK 根目录的 Makefile 会调用 Model/Makefile 中的目标
-        make_cmd = "cd /workspace && make model"
+        # 关键修复：make pkg-model 必须在 SDK 根目录执行
+        # 需要设置环境变量并加载 ST Edge AI 环境
+        # 使用 bash -l 来确保加载 /etc/profile.d/ 中的脚本
+        make_cmd = "bash -lc 'cd /workspace && make pkg-model'"
 
         logger.info(f"  启动 NE301 容器: {container_name}")
         logger.info(f"  执行命令: {make_cmd}")
         logger.info(f"  挂载卷: ne301_workspace -> /workspace")
 
         container = None
+        output_bin = None
         try:
             # 启动临时容器执行 make（不自动删除，以便获取日志）
             container = self.client.containers.run(
@@ -730,17 +689,26 @@ class DockerToolChainAdapter:
                     logger.debug(f"  容器日志:\n{logs}")
             except Exception as e:
                 logger.warning(f"  获取容器日志失败: {e}")
-            # 检查输出文件是否生成（比退出码更可靠，特别是在 QEMU 模拟环境中）
-            output_bin = self.ne301_project_path / "Model" / "build" / "ne301_Model.bin"
-            if output_bin.exists():
+            # 检查输出文件是否生成
+            # pkg-model 生成文件名格式：ne301_Model_v{version}_pkg.bin
+            # 文件在 SDK 根目录的 build/ 目录，不是 Model/build/
+            build_dir = self.ne301_project_path / "build"
+            pkg_files = sorted(
+                build_dir.glob("ne301_Model_v*_pkg.bin"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True
+            )
+
+            if pkg_files:
+                output_bin = pkg_files[0]  # 最新的文件
                 file_size = output_bin.stat().st_size
-                logger.info(f"  ✓ make model 完成，输出文件: {output_bin.name} ({file_size:,} bytes)")
+                logger.info(f"  ✓ make pkg-model 完成，输出文件: {output_bin.name} ({file_size:,} bytes)")
                 # 退出码非零但文件存在，可能是 QEMU 模拟问题
                 if result["StatusCode"] != 0:
                     logger.warning(f"  ⚠️  容器退出码: {result['StatusCode']}（可能为 QEMU 模拟问题，但输出文件有效）")
             else:
-                logger.error(f"  ✗ make 失败，退出码: {result['StatusCode']}，输出文件不存在: {output_bin}")
-                raise RuntimeError(f"make model 失败: exit code {result['StatusCode']}, 输出文件未生成")
+                logger.error(f"  ✗ make 失败，退出码: {result['StatusCode']}，输出文件不存在")
+                raise RuntimeError(f"make pkg-model 失败: exit code {result['StatusCode']}, 输出文件未生成")
 
         finally:
             # 手动删除容器
@@ -750,6 +718,8 @@ class DockerToolChainAdapter:
                     logger.info(f"  ✓ 容器已清理: {container_name}")
                 except Exception as e:
                     logger.warning(f"  清理容器失败（可能已删除）: {e}")
+
+        return output_bin
 
     def _run_make_directly(self, ne301_project_path: Path) -> None:
         """直接执行 make（在容器内）"""
