@@ -308,6 +308,49 @@ class DockerToolChainAdapter:
             self.performance_monitor.end_task(task_id, success=False)
             raise
 
+    def _extract_calibration_dataset(self, calib_dataset_path: str) -> str:
+        """
+        解压校准数据集 ZIP 文件并返回图片目录路径
+
+        Args:
+            calib_dataset_path: 校准数据集 ZIP 文件路径
+
+        Returns:
+            解压后的图片目录路径
+
+        Raises:
+            RuntimeError: 如果解压失败或找不到图片
+        """
+        import zipfile
+        import tempfile
+
+        if not calib_dataset_path or not calib_dataset_path.endswith('.zip'):
+            return calib_dataset_path
+
+        logger.info(f"检测到校准数据集是 ZIP 文件，正在解压...")
+
+        extract_dir = tempfile.mkdtemp(prefix="calibration_")
+
+        try:
+            with zipfile.ZipFile(calib_dataset_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+
+            logger.info(f"✅ 校准数据集已解压到: {extract_dir}")
+
+            # 查找解压后的目录
+            for root, dirs, files in os.walk(extract_dir):
+                image_files = [f for f in files if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                if image_files:
+                    logger.info(f"✅ 找到校准图片目录: {root} (包含 {len(image_files)} 张图片)")
+                    return root
+
+            logger.warning(f"解压后未找到有效的校准图片，将使用解压目录")
+            return extract_dir
+
+        except Exception as e:
+            logger.error(f"解压校准数据集失败: {e}")
+            raise RuntimeError(f"解压校准数据集失败: {e}")
+
     def _export_to_quantized_tflite(
         self,
         model_path: str,
@@ -339,33 +382,7 @@ class DockerToolChainAdapter:
         logger.info(f"  量化类型: int8")
 
         # 处理校准数据集
-        actual_calib_path = calib_dataset_path
-        if calib_dataset_path and calib_dataset_path.endswith('.zip'):
-            logger.info(f"检测到校准数据集是 ZIP 文件，正在解压...")
-            import zipfile
-
-            extract_dir = tempfile.mkdtemp(prefix="calibration_")
-
-            try:
-                with zipfile.ZipFile(calib_dataset_path, 'r') as zip_ref:
-                    zip_ref.extractall(extract_dir)
-
-                logger.info(f"✅ 校准数据集已解压到: {extract_dir}")
-
-                # 查找解压后的目录
-                for root, dirs, files in os.walk(extract_dir):
-                    image_files = [f for f in files if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-                    if image_files:
-                        actual_calib_path = root
-                        logger.info(f"✅ 找到校准图片目录: {actual_calib_path} (包含 {len(image_files)} 张图片)")
-                        break
-
-                if not actual_calib_path or actual_calib_path == calib_dataset_path:
-                    logger.warning(f"解压后未找到有效的校准图片，将使用空路径")
-                    actual_calib_path = extract_dir
-            except Exception as e:
-                logger.error(f"解压校准数据集失败: {e}")
-                raise RuntimeError(f"解压校准数据集失败: {e}")
+        actual_calib_path = self._extract_calibration_dataset(calib_dataset_path) if calib_dataset_path else None
 
         # 加载 YOLOv8 模型
         model = YOLO(model_path)
