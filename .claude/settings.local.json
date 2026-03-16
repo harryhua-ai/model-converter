@@ -3,7 +3,8 @@
     "allow": [
       "WebSearch",
       "Bash(find AIToolStack/backend -name \"*ne301*\" -o -name \"*docker*\" 2>/dev/null | grep -E \"\\\\.\\(py|sh\\)$\")",
-      "Bash(cat ~/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.1/skills/*/skill.md | grep -E \"^name:|^description:\" | head -30)"
+      "Bash(cat ~/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.1/skills/*/skill.md | grep -E \"^name:|^description:\" | head -30)",
+      "Bash(docker restart:*)"
     ]
   }
 }

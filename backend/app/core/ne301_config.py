@@ -2,6 +2,7 @@
 NE301 工具链配置管理
 
 支持版本检测和动态适配，兼容 NE301 工具链的后续更新
+参考 AIToolStack 的实现
 """
 
 import os
@@ -12,6 +13,13 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple, List
 from dataclasses import dataclass, field
 from datetime import datetime
+
+# TensorFlow import (可选)
+try:
+    import tensorflow as tf
+    TENSORFLOW_AVAILABLE = True
+except ImportError:
+    TENSORFLOW_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -140,12 +148,13 @@ class NE301Toolchain:
             patch = self._extract_version_var(content, "VERSION_PATCH", 0)
             build = self._extract_version_var(content, "VERSION_BUILD", 0)
 
-            if major and minor and patch:
+            # ✅ 修复：允许 minor 和 patch 为 0
+            if major is not None and minor is not None and patch is not None:
                 self.version = NE301Version(
                     major=major,
                     minor=minor,
                     patch=patch,
-                    build=build or 0
+                    build=build if build is not None else 0
                 )
                 logger.info(f"✓ 检测到 NE301 版本: {self.version}")
 
@@ -156,7 +165,7 @@ class NE301Toolchain:
         """从 Makefile 内容中提取版本变量"""
         # 匹配: VERSION_MAJOR ?= 2 或 VERSION_MAJOR := 2
         match = re.search(rf'{var_name}\s*:?=\s*(\d+)', content)
-        return int(match.group(1)) if match else None
+        return int(match.group(1)) if match else default
 
     def _detect_tools(self) -> None:
         """检测可用的打包工具"""
@@ -228,10 +237,33 @@ class NE301Toolchain:
         return None
 
     def get_model_version(self) -> NE301Version:
-        """获取模型版本号"""
-        if self.version:
-            return self.version
-        return NE301Version.generate_timestamp_version()
+        """获取模型版本号（从 version.mk 读取）
+
+        动态读取 version.mk 中的版本号，确保与 OTA packer 一致
+        """
+        version_mk = self.project_root / "version.mk"
+
+        if not version_mk.exists():
+            logger.warning(f"⚠️  version.mk 不存在，使用默认版本 3.0.0.1")
+            return NE301Version(3, 0, 0, 1)
+
+        try:
+            with open(version_mk, 'r') as f:
+                content = f.read()
+
+            # 解析版本号
+            major = self._extract_version_var(content, "VERSION_MAJOR", 3)
+            minor = self._extract_version_var(content, "VERSION_MINOR", 0)
+            patch = self._extract_version_var(content, "VERSION_PATCH", 0)
+            build = self._extract_version_var(content, "VERSION_BUILD", 1)
+
+            version = NE301Version(major, minor, patch, build)
+            logger.info(f"✅ 从 version.mk 读取版本号: {version}")
+            return version
+
+        except Exception as e:
+            logger.warning(f"⚠️  读取 version.mk 失败: {e}，使用默认版本")
+            return NE301Version(3, 0, 0, 1)
 
     def supports_ota_package(self) -> bool:
         """检查是否支持 OTA 打包"""
@@ -328,6 +360,64 @@ def get_ne301_toolchain(ne301_project_path: Path) -> NE301Toolchain:
     return NE301ConfigManager.get_toolchain(ne301_project_path)
 
 
+def extract_tflite_quantization_params(tflite_path: Path) -> Tuple[Optional[float], Optional[int], Optional[Tuple[int, int, int]]]:
+    """
+    从 TFLite 模型中提取量化参数和输出维度（参考 AIToolStack）
+
+    Args:
+        tflite_path: TFLite 模型文件路径
+
+    Returns:
+        Tuple of (output_scale, output_zero_point, output_shape)
+        Returns (None, None, None) if extraction fails
+        All return values are converted to Python native types (JSON serializable)
+    """
+    if not TENSORFLOW_AVAILABLE:
+        logger.warning("TensorFlow not available, cannot extract quantization parameters from TFLite model")
+        return None, None, None
+
+    try:
+        # Load TFLite model
+        interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
+        interpreter.allocate_tensors()
+
+        # Get output tensor details
+        output_details = interpreter.get_output_details()[0]  # Assume only one output
+        output_shape = output_details['shape']  # e.g., [1, 84, 1344]
+
+        # Convert output_shape to Python native types (handle NumPy int64/int32)
+        if output_shape is not None:
+            output_shape = tuple(int(x) for x in output_shape)
+
+        # Extract quantization parameters
+        if 'quantization_parameters' in output_details:
+            quant_params = output_details['quantization_parameters']
+
+            # Extract scale and zero_point, and convert to Python native types
+            if quant_params.get('scales') and len(quant_params['scales']) > 0:
+                scale_val = quant_params['scales'][0]
+                # Convert NumPy float type to Python float
+                output_scale = float(scale_val) if scale_val is not None else None
+            else:
+                output_scale = None
+
+            if quant_params.get('zero_points') and len(quant_params['zero_points']) > 0:
+                zp_val = quant_params['zero_points'][0]
+                # Convert NumPy int type to Python int
+                output_zero_point = int(zp_val) if zp_val is not None else None
+            else:
+                output_zero_point = None
+
+            logger.info(f"✅ 从 TFLite 模型提取量化参数: scale={output_scale}, zero_point={output_zero_point}, shape={output_shape}")
+            return output_scale, output_zero_point, output_shape
+        else:
+            logger.warning("TFLite 模型输出没有量化参数")
+            return None, None, output_shape
+    except Exception as e:
+        logger.warning(f"从 TFLite 模型提取量化参数失败: {e}", exc_info=True)
+        return None, None, None
+
+
 def generate_ne301_json_config(
     tflite_path: Path,
     model_name: str,
@@ -335,11 +425,14 @@ def generate_ne301_json_config(
     num_classes: int,
     class_names: List[str],
     confidence_threshold: float = 0.25,
+    iou_threshold: float = 0.45,
+    max_detections: int = 100,
+    total_boxes: Optional[int] = None,
 ) -> Dict:
     """
     生成 NE301 模型 JSON 配置
 
-    参考 AIToolStack 的配置格式
+    参考 AIToolStack 的实现，自动从 TFLite 模型提取量化参数
 
     Args:
         tflite_path: TFLite 模型文件路径
@@ -348,18 +441,62 @@ def generate_ne301_json_config(
         num_classes: 类别数量
         class_names: 类别名称列表
         confidence_threshold: 置信度阈值
+        iou_threshold: IoU 阈值
+        max_detections: 最大检测数
+        total_boxes: 总框数（如果为 None，将自动计算或从输出形状提取）
 
     Returns:
         Dict: NE301 JSON 配置
     """
-    # 计算输出层的 grid 尺寸（YOLOv8 的特征图）
-    # 对于输入尺寸 input_size，特征图通常是 input_size / 8, / 16, / 32
-    grid_large = input_size // 8
-    grid_medium = input_size // 16
-    grid_small = input_size // 32
+    # ⭐ 关键修复：从 TFLite 模型自动提取量化参数和输出形状
+    output_scale, output_zero_point, output_shape = extract_tflite_quantization_params(tflite_path)
 
-    # YOLOv8 的输出通道数：num_classes + 4 (box) + 1 (obj)
-    output_channels = num_classes + 5
+    # 使用默认值（如果提取失败）
+    if output_scale is None:
+        output_scale = 1.0
+        logger.warning(f"无法提取量化参数，使用默认 scale={output_scale}")
+
+    if output_zero_point is None:
+        output_zero_point = 0
+        logger.warning(f"无法提取量化参数，使用默认 zero_point={output_zero_point}")
+
+    # 从输出形状提取高度和宽度
+    # output_shape format: (batch, height, width) e.g., (1, 84, 1344)
+    if output_shape is not None:
+        output_height = output_shape[1] if len(output_shape) > 1 else (4 + num_classes)
+        output_width = output_shape[2] if len(output_shape) > 2 else None
+        if output_width is not None and total_boxes is None:
+            total_boxes = output_width
+            logger.info(f"✅ 从输出形状提取 total_boxes={total_boxes}")
+    else:
+        output_height = 4 + num_classes  # Default: 4 (bbox) + num_classes
+        logger.warning(f"无法提取输出形状，使用默认 output_height={output_height}")
+
+    # 如果没有提供 total_boxes，根据输入尺寸计算
+    if total_boxes is None:
+        # YOLOv8 的 total_boxes 计算公式
+        # YOLOv8 有 3 个检测头，stride 分别为 8, 16, 32
+        if input_size == 256:
+            total_boxes = 1344  # 3 * (32*32 + 16*16 + 8*8) = 3 * 448
+        elif input_size == 320:
+            total_boxes = 2100  # 3 * (40*40 + 20*20 + 10*10) = 3 * 700
+        elif input_size == 416:
+            total_boxes = 3549  # 3 * (52*52 + 26*26 + 13*13) = 3 * 1183
+        elif input_size == 640:
+            total_boxes = 8400  # 3 * (80*80 + 40*40 + 20*20) = 3 * 2800
+        else:
+            # 通用计算
+            scale = input_size // 8
+            total_boxes = 3 * (scale * scale + (scale // 2) ** 2 + (scale // 4) ** 2)
+        logger.info(f"✅ 计算 total_boxes={total_boxes} (input_size={input_size})")
+
+    # 确保输出高度至少为 4 + num_classes
+    if output_height < 4 + num_classes:
+        output_height = 4 + num_classes
+        logger.warning(f"输出高度 {output_height} 小于预期 (4 + {num_classes})，使用计算值")
+
+    logger.info(f"📋 生成 JSON 配置: output_scale={output_scale}, output_zero_point={output_zero_point}, "
+                f"output_height={output_height}, total_boxes={total_boxes}")
 
     return {
         "version": "1.0.0",
@@ -378,43 +515,23 @@ def generate_ne301_json_config(
             "data_type": "uint8",
             "color_format": "RGB888_YUV444_1",
             "normalization": {
-                "enabled": False,
+                "enabled": True,
                 "mean": [0.0, 0.0, 0.0],
-                "std": [1.0, 1.0, 1.0]
+                "std": [255.0, 255.0, 255.0]
             }
         },
         "output_spec": {
-            "num_outputs": 3,
+            "num_outputs": 1,
             "outputs": [
                 {
-                    "name": "output_large",
+                    "name": "output0",
                     "batch": 1,
-                    "height": grid_large,
-                    "width": grid_large,
-                    "channels": output_channels,
-                    "data_type": "float32",
-                    "scale": 1.0,
-                    "zero_point": 0
-                },
-                {
-                    "name": "output_medium",
-                    "batch": 1,
-                    "height": grid_medium,
-                    "width": grid_medium,
-                    "channels": output_channels,
-                    "data_type": "float32",
-                    "scale": 1.0,
-                    "zero_point": 0
-                },
-                {
-                    "name": "output_small",
-                    "batch": 1,
-                    "height": grid_small,
-                    "width": grid_small,
-                    "channels": output_channels,
-                    "data_type": "float32",
-                    "scale": 1.0,
-                    "zero_point": 0
+                    "height": output_height,
+                    "width": total_boxes,
+                    "channels": 1,
+                    "data_type": "int8",
+                    "scale": output_scale,          # ⭐ 使用从 TFLite 提取的真实值
+                    "zero_point": output_zero_point  # ⭐ 使用从 TFLite 提取的真实值
                 }
             ]
         },
@@ -422,33 +539,19 @@ def generate_ne301_json_config(
             "exec_memory_pool": 874512384,
             "exec_memory_size": 1835008,
             "ext_memory_pool": 2415919104,
-            "ext_memory_size": 8388608,
+            "ext_memory_size": 301056,
             "alignment_requirement": 32
         },
-        "postprocess_type": "pp_od_st_yolox_uf",
+        "postprocess_type": "pp_od_yolo_v8_ui",
         "postprocess_params": {
             "num_classes": num_classes,
             "class_names": class_names,
             "confidence_threshold": confidence_threshold,
-            "iou_threshold": 0.5,
-            "max_detections": 100,
-            "scales": {
-                "large": {
-                    "grid_width": grid_large,
-                    "grid_height": grid_large,
-                    "anchors": [30.0, 30.0, 4.2, 15.0, 13.8, 42.0]
-                },
-                "medium": {
-                    "grid_width": grid_medium,
-                    "grid_height": grid_medium,
-                    "anchors": [15.0, 15.0, 2.1, 7.5, 6.9, 21.0]
-                },
-                "small": {
-                    "grid_width": grid_small,
-                    "grid_height": grid_small,
-                    "anchors": [7.5, 7.5, 1.05, 3.75, 3.45, 10.5]
-                }
-            }
+            "iou_threshold": iou_threshold,
+            "max_detections": max_detections,
+            "total_boxes": total_boxes,
+            "raw_output_scale": output_scale,          # ⭐ 与 output_spec.scale 保持一致
+            "raw_output_zero_point": output_zero_point  # ⭐ 与 output_spec.zero_point 保持一致
         },
         "runtime": {
             "execution": {

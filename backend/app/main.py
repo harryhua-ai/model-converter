@@ -64,10 +64,19 @@ def create_app() -> FastAPI:
         lifespan=lifespan
     )
 
+    # 安全修复: HIGH-2026-005 - CORS 配置
+    # 从环境变量读取允许的域名列表，避免使用通配符
+    from .core.config import settings
+    cors_origins = settings.get_cors_origins()
+
+    logger.info(f"✅ CORS 配置: {len(cors_origins)} 个允许的来源")
+    for origin in cors_origins:
+        logger.debug(f"   - {origin}")
+
     # 配置 CORS 中间件
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # 生产环境应限制具体域名
+        allow_origins=cors_origins,  # 从配置读取，不再使用通配符
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

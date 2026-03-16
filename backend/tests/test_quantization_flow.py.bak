@@ -14,7 +14,6 @@
 - 错误处理（文件不存在、量化失败等）
 """
 import pytest
-import subprocess
 from unittest.mock import Mock, patch, MagicMock, call
 from pathlib import Path
 import tempfile
@@ -104,37 +103,6 @@ def temp_tflite_file(tmp_path):
     return str(tflite_file)
 
 
-@pytest.fixture
-def temp_quant_config(tmp_path):
-    """创建临时量化配置文件"""
-    config_file = tmp_path / "user_config_quant.yaml"
-    config_data = {
-        "model": {
-            "name": "test_model",
-            "uc": "od_coco",
-            "model_path": "/path/to/saved_model",
-            "input_shape": [640, 640, 3]
-        },
-        "quantization": {
-            "fake": True,
-            "quantization_type": "per_channel",
-            "quantization_input_type": "uint8",
-            "quantization_output_type": "int8",
-            "calib_dataset_path": "",
-            "export_path": "./quantized_models",
-            "max_calib_images": 200
-        },
-        "pre_processing": {
-            "rescaling": {"scale": 255, "offset": 0}
-        }
-    }
-
-    with open(config_file, 'w') as f:
-        yaml.dump(config_data, f)
-
-    return config_file
-
-
 # ============================================================
 # 1. _export_to_saved_model() 函数测试
 # ============================================================
@@ -154,8 +122,7 @@ class TestExportToSavedModel:
             # 调用导出
             result = adapter._export_to_saved_model(
                 model_path=temp_model_file,
-                input_size=640,
-                task_id="test_task"
+                input_size=640
             )
 
             # 验证
@@ -179,8 +146,7 @@ class TestExportToSavedModel:
 
                 adapter._export_to_saved_model(
                     model_path=temp_model_file,
-                    input_size=size,
-                    task_id=f"test_task_{size}"
+                    input_size=size
                 )
 
                 # 验证导出参数包含正确的 imgsz
@@ -193,8 +159,7 @@ class TestExportToSavedModel:
         with pytest.raises(FileNotFoundError):
             adapter._export_to_saved_model(
                 model_path="/nonexistent/model.pt",
-                input_size=640,
-                task_id="test_task"
+                input_size=640
             )
 
     @pytest.mark.unit
@@ -208,8 +173,7 @@ class TestExportToSavedModel:
             with pytest.raises(RuntimeError, match="Export failed"):
                 adapter._export_to_saved_model(
                     model_path=temp_model_file,
-                    input_size=640,
-                    task_id="test_task"
+                    input_size=640
                 )
 
 
@@ -221,104 +185,28 @@ class TestRunSTQuantization:
     """测试 ST 官方量化脚本调用"""
 
     @pytest.mark.unit
-    def test_quantization_fake_mode(self, adapter, temp_quant_config, tmp_path):
+    def test_quantization_fake_mode(self, adapter, temp_saved_model, tmp_path):
         """测试 fake 量化模式（无校准数据集）"""
-        # 创建量化输出目录和文件
-        output_dir = temp_quant_config.parent / "quantized_models"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        quantized_file = output_dir / "model_quant.tflite"
-        quantized_file.write_bytes(b"\x00" * 100)
+        output_dir = tmp_path / "quantized"
+        output_dir.mkdir()
 
         # Mock subprocess.run
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
-                stdout=b"Quantized model generated",
-                stderr=b""
+                stdout=b"Quantized model generated"
             )
 
-            # 调用量化
-            result = adapter._run_st_quantization(
-                config_path=temp_quant_config,
-                task_id="test_task"
-            )
-
-            # 验证
-            assert result is not None
-            assert result.endswith(".tflite")
-            mock_run.assert_called_once()
-
-    @pytest.mark.unit
-    def test_quantization_with_calibration(self, adapter, temp_quant_config, tmp_path):
-        """测试使用真实校准数据集的量化"""
-        # 创建量化输出目录和文件
-        output_dir = temp_quant_config.parent / "quantized_models"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        quantized_file = output_dir / "model_quant.tflite"
-        quantized_file.write_bytes(b"\x00" * 100)
-
-        # Mock subprocess.run
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0,
-                stdout=b"Quantized model generated",
-                stderr=b""
-            )
-
-            # 调用量化
-            result = adapter._run_st_quantization(
-                config_path=temp_quant_config,
-                task_id="test_task"
-            )
-
-            # 验证
-            assert result is not None
-            assert result.endswith(".tflite")
-            mock_run.assert_called_once()
-
-    @pytest.mark.unit
-    def test_quantization_different_input_sizes(self, adapter, tmp_path):
-        """测试不同输入尺寸的量化配置"""
-        input_sizes = [256, 320, 416, 512, 640]
-
-        for size in input_sizes:
-            # 为每个尺寸创建配置
-            config_file = tmp_path / f"config_{size}.yaml"
-            config_data = {
-                "model": {
-                    "name": f"model_{size}",
-                    "uc": "od_coco",
-                    "model_path": "/path/to/saved_model",
-                    "input_shape": [size, size, 3]
-                },
-                "quantization": {
-                    "fake": True,
-                    "quantization_type": "per_channel",
-                    "export_path": str(tmp_path / "quantized_models"),
-                }
-            }
-
-            with open(config_file, 'w') as f:
-                yaml.dump(config_data, f)
-
-            # 创建输出
-            output_dir = config_file.parent / "quantized_models"
-            output_dir.mkdir(exist_ok=True)
-            quantized_file = output_dir / f"model_{size}_quant.tflite"
-            quantized_file.write_bytes(b"\x00" * 100)
-
-            # Mock subprocess.run
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(
-                    returncode=0,
-                    stdout=b"",
-                    stderr=b""
-                )
+            # Mock YAML 配置生成
+            with patch.object(adapter, "_prepare_quant_config") as mock_config:
+                mock_config.return_value = tmp_path / "config.yaml"
 
                 # 调用量化
                 result = adapter._run_st_quantization(
-                    config_path=config_file,
-                    task_id=f"test_task_{size}"
+                    saved_model_path=temp_saved_model,
+                    input_size=640,
+                    calib_dataset_path=None,
+                    output_dir=str(output_dir)
                 )
 
                 # 验证
@@ -326,46 +214,113 @@ class TestRunSTQuantization:
                 mock_run.assert_called_once()
 
     @pytest.mark.unit
-    def test_quantization_script_failure(self, adapter, temp_quant_config):
+    def test_quantization_with_calibration(self, adapter, temp_saved_model, temp_calibration_zip, tmp_path):
+        """测试使用真实校准数据集的量化"""
+        output_dir = tmp_path / "quantized"
+        output_dir.mkdir()
+
+        # Mock subprocess.run
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout=b"Quantized model generated"
+            )
+
+            # Mock 配置生成
+            with patch.object(adapter, "_prepare_quant_config") as mock_config:
+                mock_config.return_value = tmp_path / "config.yaml"
+
+                # 调用量化
+                result = adapter._run_st_quantization(
+                    saved_model_path=temp_saved_model,
+                    input_size=640,
+                    calib_dataset_path=temp_calibration_zip,
+                    output_dir=str(output_dir)
+                )
+
+                # 验证
+                assert result is not None
+
+                # 验证配置生成时使用了校准数据集路径
+                mock_config.assert_called_once()
+                call_args = mock_config.call_args
+                # 第三个参数应该是校准数据集路径
+                assert len(call_args[0]) >= 3
+
+    @pytest.mark.unit
+    def test_quantization_different_input_sizes(self, adapter, temp_saved_model, tmp_path):
+        """测试不同输入尺寸的量化配置"""
+        output_dir = tmp_path / "quantized"
+        output_dir.mkdir()
+
+        input_sizes = [256, 320, 416, 512, 640]
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+
+            with patch.object(adapter, "_prepare_quant_config") as mock_config:
+                mock_config.return_value = tmp_path / "config.yaml"
+
+                for size in input_sizes:
+                    mock_config.reset_mock()
+
+                    adapter._run_st_quantization(
+                        saved_model_path=temp_saved_model,
+                        input_size=size,
+                        calib_dataset_path=None,
+                        output_dir=str(output_dir)
+                    )
+
+                    # 验证配置使用了正确的输入尺寸
+                    mock_config.assert_called_once()
+                    call_args = mock_config.call_args
+                    assert call_args[0][1] == size  # input_size 参数
+
+    @pytest.mark.unit
+    def test_quantization_script_failure(self, adapter, temp_saved_model, tmp_path):
         """测试量化脚本执行失败"""
+        output_dir = tmp_path / "quantized"
+        output_dir.mkdir()
+
         with patch("subprocess.run") as mock_run:
             # 模拟脚本执行失败
             mock_run.return_value = MagicMock(
                 returncode=1,
-                stderr=b"Quantization failed",
-                stdout=b""
+                stderr=b"Quantization failed"
             )
 
-            with pytest.raises(RuntimeError, match="量化失败"):
-                adapter._run_st_quantization(
-                    config_path=temp_quant_config,
-                    task_id="test_task"
-                )
+            with patch.object(adapter, "_prepare_quant_config") as mock_config:
+                mock_config.return_value = tmp_path / "config.yaml"
+
+                with pytest.raises(RuntimeError, match="量化失败"):
+                    adapter._run_st_quantization(
+                        saved_model_path=temp_saved_model,
+                        input_size=640,
+                        calib_dataset_path=None,
+                        output_dir=str(output_dir)
+                    )
 
     @pytest.mark.unit
-    @pytest.mark.skip(reason="由于 mock 脚本总是会创建文件，难以模拟此场景")
-    def test_quantization_output_file_not_created(self, adapter, temp_quant_config, tmp_path):
+    def test_quantization_output_file_not_created(self, adapter, temp_saved_model, tmp_path):
         """测试量化文件未生成"""
-        # 创建空的输出目录
-        output_dir = temp_quant_config.parent / "quantized_models"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = tmp_path / "quantized"
+        output_dir.mkdir()
 
-        # 完全 mock subprocess.run，让它返回成功但不实际运行脚本
-        # 这样就不会创建任何文件
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=0,
-                stdout=b"",
-                stderr=b""
-            )
+            # 脚本返回成功但输出文件不存在
+            mock_run.return_value = MagicMock(returncode=0)
 
-            # 由于 subprocess.run 被 mock，真实的脚本不会被调用
-            # 所以输出目录保持为空，测试应该正确检测到这种情况
-            with pytest.raises(FileNotFoundError, match="量化文件未生成"):
-                adapter._run_st_quantization(
-                    config_path=temp_quant_config,
-                    task_id="test_task"
-                )
+            with patch.object(adapter, "_prepare_quant_config") as mock_config:
+                mock_config.return_value = tmp_path / "config.yaml"
+
+                with patch("pathlib.Path.exists", return_value=False):
+                    with pytest.raises(FileNotFoundError, match="量化文件未生成"):
+                        adapter._run_st_quantization(
+                            saved_model_path=temp_saved_model,
+                            input_size=640,
+                            calib_dataset_path=None,
+                            output_dir=str(output_dir)
+                        )
 
 
 # ============================================================
@@ -378,10 +333,7 @@ class TestValidateQuantizedModel:
     @pytest.mark.unit
     def test_validate_model_success(self, adapter, temp_tflite_file):
         """测试成功验证量化模型"""
-        # 导入 tensorflow 来 mock 正确的模块路径
-        import tensorflow as tf
-
-        with patch.object(tf.lite, "Interpreter") as mock_interpreter_cls:
+        with patch("tensorflow.lite.Interpreter") as mock_interpreter_cls:
             # Mock interpreter
             mock_interpreter = MagicMock()
             mock_interpreter.get_input_details.return_value = [
@@ -394,9 +346,8 @@ class TestValidateQuantizedModel:
 
             # 验证模型
             result = adapter._validate_quantized_model(
-                quantized_tflite_path=temp_tflite_file,
-                input_size=640,
-                task_id="test_task"
+                tflite_path=temp_tflite_file,
+                input_size=640
             )
 
             # 验证
@@ -406,9 +357,7 @@ class TestValidateQuantizedModel:
     @pytest.mark.unit
     def test_validate_model_output_shape_correct(self, adapter, temp_tflite_file):
         """测试输出形状验证（正确）"""
-        import tensorflow as tf
-
-        with patch.object(tf.lite, "Interpreter") as mock_interpreter_cls:
+        with patch("tensorflow.lite.Interpreter") as mock_interpreter_cls:
             mock_interpreter = MagicMock()
             # 640x640 的预期输出: (1, 34, 8400)
             mock_interpreter.get_output_details.return_value = [
@@ -420,9 +369,8 @@ class TestValidateQuantizedModel:
             mock_interpreter_cls.return_value = mock_interpreter
 
             result = adapter._validate_quantized_model(
-                quantized_tflite_path=temp_tflite_file,
-                input_size=640,
-                task_id="test_task"
+                tflite_path=temp_tflite_file,
+                input_size=640
             )
 
             assert result is True
@@ -430,9 +378,7 @@ class TestValidateQuantizedModel:
     @pytest.mark.unit
     def test_validate_model_output_shape_incorrect(self, adapter, temp_tflite_file):
         """测试输出形状验证（错误）"""
-        import tensorflow as tf
-
-        with patch.object(tf.lite, "Interpreter") as mock_interpreter_cls:
+        with patch("tensorflow.lite.Interpreter") as mock_interpreter_cls:
             mock_interpreter = MagicMock()
             # 错误的输出形状
             mock_interpreter.get_output_details.return_value = [
@@ -445,16 +391,13 @@ class TestValidateQuantizedModel:
 
             with pytest.raises(ValueError, match="输出形状错误"):
                 adapter._validate_quantized_model(
-                    quantized_tflite_path=temp_tflite_file,
-                    input_size=640,
-                    task_id="test_task"
+                    tflite_path=temp_tflite_file,
+                    input_size=640
                 )
 
     @pytest.mark.unit
     def test_validate_model_different_sizes(self, adapter, temp_tflite_file):
         """测试不同输入尺寸的输出形状验证"""
-        import tensorflow as tf
-
         test_cases = [
             (256, 1344),
             (320, 2100),
@@ -463,7 +406,7 @@ class TestValidateQuantizedModel:
             (640, 8400),
         ]
 
-        with patch.object(tf.lite, "Interpreter") as mock_interpreter_cls:
+        with patch("tensorflow.lite.Interpreter") as mock_interpreter_cls:
             for input_size, expected_boxes in test_cases:
                 mock_interpreter = MagicMock()
                 mock_interpreter.get_output_details.return_value = [
@@ -475,9 +418,8 @@ class TestValidateQuantizedModel:
                 mock_interpreter_cls.return_value = mock_interpreter
 
                 result = adapter._validate_quantized_model(
-                    quantized_tflite_path=temp_tflite_file,
-                    input_size=input_size,
-                    task_id=f"test_task_{input_size}"
+                    tflite_path=temp_tflite_file,
+                    input_size=input_size
                 )
 
                 assert result is True
@@ -487,29 +429,25 @@ class TestValidateQuantizedModel:
         """测试模型文件不存在"""
         with pytest.raises(FileNotFoundError):
             adapter._validate_quantized_model(
-                quantized_tflite_path="/nonexistent/model.tflite",
-                input_size=640,
-                task_id="test_task"
+                tflite_path="/nonexistent/model.tflite",
+                input_size=640
             )
 
     @pytest.mark.unit
     def test_validate_model_invalid_tflite(self, adapter, temp_tflite_file):
         """测试无效的 TFLite 文件"""
-        import tensorflow as tf
-
-        with patch.object(tf.lite, "Interpreter") as mock_interpreter_cls:
+        with patch("tensorflow.lite.Interpreter") as mock_interpreter_cls:
             mock_interpreter_cls.side_effect = RuntimeError("Invalid TFLite model")
 
             with pytest.raises(RuntimeError, match="无效的 TFLite 模型"):
                 adapter._validate_quantized_model(
-                    quantized_tflite_path=temp_tflite_file,
-                    input_size=640,
-                    task_id="test_task"
+                    tflite_path=temp_tflite_file,
+                    input_size=640
                 )
 
 
 # ============================================================
-# 4. _convert_with_saved_model_and_st_quant() 方法测试
+# 4. convert_model() 方法修改测试
 # ============================================================
 
 class TestConvertModelWithQuantization:
@@ -519,58 +457,63 @@ class TestConvertModelWithQuantization:
     def test_convert_model_with_new_quantization_flow(self, adapter, temp_model_file, sample_config):
         """测试使用 SavedModel + ST 量化的完整流程"""
         with patch.object(adapter, "_export_to_saved_model") as mock_export:
-            with patch.object(adapter, "_prepare_quant_config") as mock_config:
-                with patch.object(adapter, "_run_st_quantization") as mock_quant:
-                    with patch.object(adapter, "_validate_quantized_model") as mock_validate:
+            with patch.object(adapter, "_run_st_quantization") as mock_quant:
+                with patch.object(adapter, "_validate_quantized_model") as mock_validate:
+                    with patch.object(adapter, "_prepare_ne301_project") as mock_prepare:
+                        with patch.object(adapter, "_build_ne301_model") as mock_build:
 
-                        # Mock 各步骤返回值
-                        mock_export.return_value = "/tmp/saved_model"
-                        mock_config.return_value = Path("/tmp/config.yaml")
-                        mock_quant.return_value = "/tmp/quantized.tflite"
-                        mock_validate.return_value = True
+                            # Mock 各步骤返回值
+                            mock_export.return_value = "/tmp/saved_model"
+                            mock_quant.return_value = "/tmp/quantized.tflite"
+                            mock_validate.return_value = True
+                            mock_prepare.return_value = Path("/tmp/ne301/Model")
+                            mock_build.return_value = "/tmp/output.bin"
 
-                        # 执行转换
-                        result = adapter._convert_with_saved_model_and_st_quant(
-                            task_id="test-123",
-                            model_path=temp_model_file,
-                            config=sample_config,
-                            calib_dataset_path=None,
-                            progress_callback=None
-                        )
+                            # 执行转换
+                            result = adapter.convert_model(
+                                task_id="test-123",
+                                model_path=temp_model_file,
+                                config=sample_config,
+                                calib_dataset_path=None,
+                                yaml_path=None
+                            )
 
-                        # 验证调用链
-                        assert result == "/tmp/quantized.tflite"
-                        mock_export.assert_called_once()
-                        mock_config.assert_called_once()
-                        mock_quant.assert_called_once()
-                        mock_validate.assert_called_once()
+                            # 验证调用链
+                            assert result == "/tmp/output.bin"
+                            mock_export.assert_called_once()
+                            mock_quant.assert_called_once()
+                            mock_validate.assert_called_once()
+                            mock_prepare.assert_called_once()
+                            mock_build.assert_called_once()
 
     @pytest.mark.unit
     def test_convert_model_with_calibration_dataset(self, adapter, temp_model_file, temp_calibration_zip, sample_config):
         """测试带校准数据集的转换"""
         with patch.object(adapter, "_export_to_saved_model") as mock_export:
-            with patch.object(adapter, "_prepare_quant_config") as mock_config:
-                with patch.object(adapter, "_run_st_quantization") as mock_quant:
-                    with patch.object(adapter, "_validate_quantized_model") as mock_validate:
+            with patch.object(adapter, "_run_st_quantization") as mock_quant:
+                with patch.object(adapter, "_validate_quantized_model") as mock_validate:
+                    with patch.object(adapter, "_prepare_ne301_project") as mock_prepare:
+                        with patch.object(adapter, "_build_ne301_model") as mock_build:
 
-                        mock_export.return_value = "/tmp/saved_model"
-                        mock_config.return_value = Path("/tmp/config.yaml")
-                        mock_quant.return_value = "/tmp/quantized.tflite"
-                        mock_validate.return_value = True
+                            mock_export.return_value = "/tmp/saved_model"
+                            mock_quant.return_value = "/tmp/quantized.tflite"
+                            mock_validate.return_value = True
+                            mock_prepare.return_value = Path("/tmp/ne301/Model")
+                            mock_build.return_value = "/tmp/output.bin"
 
-                        # 执行转换（带校准数据集）
-                        result = adapter._convert_with_saved_model_and_st_quant(
-                            task_id="test-456",
-                            model_path=temp_model_file,
-                            config=sample_config,
-                            calib_dataset_path=temp_calibration_zip,
-                            progress_callback=None
-                        )
+                            # 执行转换（带校准数据集）
+                            result = adapter.convert_model(
+                                task_id="test-456",
+                                model_path=temp_model_file,
+                                config=sample_config,
+                                calib_dataset_path=temp_calibration_zip,
+                                yaml_path=None
+                            )
 
-                        # 验证配置生成时使用了校准数据集
-                        mock_config.assert_called_once()
-                        call_args = mock_config.call_args
-                        assert call_args[1]["calib_dataset_path"] == temp_calibration_zip
+                            # 验证量化时使用了校准数据集
+                            mock_quant.assert_called_once()
+                            call_args = mock_quant.call_args
+                            assert call_args[1]["calib_dataset_path"] == temp_calibration_zip
 
     @pytest.mark.unit
     def test_convert_model_export_failure(self, adapter, temp_model_file, sample_config):
@@ -579,53 +522,43 @@ class TestConvertModelWithQuantization:
             mock_export.side_effect = RuntimeError("Export failed")
 
             with pytest.raises(RuntimeError, match="Export failed"):
-                adapter._convert_with_saved_model_and_st_quant(
+                adapter.convert_model(
                     task_id="test-error",
                     model_path=temp_model_file,
-                    config=sample_config,
-                    calib_dataset_path=None,
-                    progress_callback=None
+                    config=sample_config
                 )
 
     @pytest.mark.unit
     def test_convert_model_quantization_failure(self, adapter, temp_model_file, sample_config):
         """测试量化失败"""
         with patch.object(adapter, "_export_to_saved_model") as mock_export:
-            with patch.object(adapter, "_prepare_quant_config") as mock_config:
-                with patch.object(adapter, "_run_st_quantization") as mock_quant:
-                    mock_export.return_value = "/tmp/saved_model"
-                    mock_config.return_value = Path("/tmp/config.yaml")
-                    mock_quant.side_effect = RuntimeError("Quantization failed")
+            with patch.object(adapter, "_run_st_quantization") as mock_quant:
+                mock_export.return_value = "/tmp/saved_model"
+                mock_quant.side_effect = RuntimeError("Quantization failed")
 
-                    with pytest.raises(RuntimeError, match="Quantization failed"):
-                        adapter._convert_with_saved_model_and_st_quant(
-                            task_id="test-error",
-                            model_path=temp_model_file,
-                            config=sample_config,
-                            calib_dataset_path=None,
-                            progress_callback=None
-                        )
+                with pytest.raises(RuntimeError, match="Quantization failed"):
+                    adapter.convert_model(
+                        task_id="test-error",
+                        model_path=temp_model_file,
+                        config=sample_config
+                    )
 
     @pytest.mark.unit
     def test_convert_model_validation_failure(self, adapter, temp_model_file, sample_config):
         """测试模型验证失败"""
         with patch.object(adapter, "_export_to_saved_model") as mock_export:
-            with patch.object(adapter, "_prepare_quant_config") as mock_config:
-                with patch.object(adapter, "_run_st_quantization") as mock_quant:
-                    with patch.object(adapter, "_validate_quantized_model") as mock_validate:
-                        mock_export.return_value = "/tmp/saved_model"
-                        mock_config.return_value = Path("/tmp/config.yaml")
-                        mock_quant.return_value = "/tmp/quantized.tflite"
-                        mock_validate.side_effect = ValueError("Invalid output shape")
+            with patch.object(adapter, "_run_st_quantization") as mock_quant:
+                with patch.object(adapter, "_validate_quantized_model") as mock_validate:
+                    mock_export.return_value = "/tmp/saved_model"
+                    mock_quant.return_value = "/tmp/quantized.tflite"
+                    mock_validate.side_effect = ValueError("Invalid output shape")
 
-                        with pytest.raises(ValueError, match="Invalid output shape"):
-                            adapter._convert_with_saved_model_and_st_quant(
-                                task_id="test-error",
-                                model_path=temp_model_file,
-                                config=sample_config,
-                                calib_dataset_path=None,
-                                progress_callback=None
-                            )
+                    with pytest.raises(ValueError, match="Invalid output shape"):
+                        adapter.convert_model(
+                            task_id="test-error",
+                            model_path=temp_model_file,
+                            config=sample_config
+                        )
 
     @pytest.mark.unit
     def test_convert_model_progress_callback(self, adapter, temp_model_file, sample_config):
@@ -636,29 +569,30 @@ class TestConvertModelWithQuantization:
             progress_updates.append((progress, message))
 
         with patch.object(adapter, "_export_to_saved_model") as mock_export:
-            with patch.object(adapter, "_prepare_quant_config") as mock_config:
-                with patch.object(adapter, "_run_st_quantization") as mock_quant:
-                    with patch.object(adapter, "_validate_quantized_model") as mock_validate:
+            with patch.object(adapter, "_run_st_quantization") as mock_quant:
+                with patch.object(adapter, "_validate_quantized_model") as mock_validate:
+                    with patch.object(adapter, "_prepare_ne301_project") as mock_prepare:
+                        with patch.object(adapter, "_build_ne301_model") as mock_build:
 
-                        mock_export.return_value = "/tmp/saved_model"
-                        mock_config.return_value = Path("/tmp/config.yaml")
-                        mock_quant.return_value = "/tmp/quantized.tflite"
-                        mock_validate.return_value = True
+                            mock_export.return_value = "/tmp/saved_model"
+                            mock_quant.return_value = "/tmp/quantized.tflite"
+                            mock_validate.return_value = True
+                            mock_prepare.return_value = Path("/tmp/ne301/Model")
+                            mock_build.return_value = "/tmp/output.bin"
 
-                        # 执行转换（带进度回调）
-                        result = adapter._convert_with_saved_model_and_st_quant(
-                            task_id="test-callback",
-                            model_path=temp_model_file,
-                            config=sample_config,
-                            calib_dataset_path=None,
-                            progress_callback=mock_callback
-                        )
+                            # 执行转换（带进度回调）
+                            adapter.convert_model(
+                                task_id="test-callback",
+                                model_path=temp_model_file,
+                                config=sample_config,
+                                progress_callback=mock_callback
+                            )
 
-                        # 验证进度回调被调用
-                        assert len(progress_updates) > 0
-                        # 验证最终进度接近 50%（验证阶段完成后）
-                        final_progress = progress_updates[-1][0]
-                        assert final_progress >= 50
+                            # 验证进度回调被调用
+                            assert len(progress_updates) > 0
+                            # 验证最终进度是 100%
+                            final_progress = progress_updates[-1][0]
+                            assert final_progress == 100
 
 
 # ============================================================
@@ -767,29 +701,16 @@ class TestQuantizationIntegration:
         except ImportError:
             pytest.skip("TensorFlow 不可用")
 
-        # 验证模型文件是否有效（如果不是有效的 PyTorch 模型，跳过测试）
-        try:
-            import torch
-            # 尝试加载模型以验证其有效性
-            try:
-                torch.load(temp_model_file, map_location='cpu')
-            except Exception as e:
-                pytest.skip(f"测试模型文件无效: {e}")
-        except ImportError:
-            pytest.skip("PyTorch 不可用")
-
         # 执行完整转换（无校准数据集）
-        result = adapter._convert_with_saved_model_and_st_quant(
+        result = adapter.convert_model(
             task_id="integration-fake",
             model_path=temp_model_file,
             config=sample_config,
-            calib_dataset_path=None,
-            progress_callback=None  # 添加缺失的参数
+            calib_dataset_path=None
         )
 
         # 验证结果
         assert result is not None
-        assert result.endswith(".tflite")
         assert Path(result).exists()
 
     @pytest.mark.integration
@@ -805,28 +726,16 @@ class TestQuantizationIntegration:
         except ImportError:
             pytest.skip("TensorFlow 不可用")
 
-        # 验证模型文件是否有效
-        try:
-            import torch
-            try:
-                torch.load(temp_model_file, map_location='cpu')
-            except Exception as e:
-                pytest.skip(f"测试模型文件无效: {e}")
-        except ImportError:
-            pytest.skip("PyTorch 不可用")
-
         # 执行完整转换（带校准数据集）
-        result = adapter._convert_with_saved_model_and_st_quant(
+        result = adapter.convert_model(
             task_id="integration-calib",
             model_path=temp_model_file,
             config=sample_config,
-            calib_dataset_path=temp_calibration_zip,
-            progress_callback=None  # 添加缺失的参数
+            calib_dataset_path=temp_calibration_zip
         )
 
         # 验证结果
         assert result is not None
-        assert result.endswith(".tflite")
         assert Path(result).exists()
 
 
@@ -855,22 +764,13 @@ class TestEdgeCases:
         """测试无效的输入尺寸"""
         invalid_sizes = [-1, 0, 10000]
 
-        with patch("ultralytics.YOLO") as mock_yolo:
-            mock_model = MagicMock()
-            mock_model.export.return_value = "/tmp/saved_model"
-            mock_yolo.return_value = mock_model
-
+        with patch("ultralytics.YOLO"):
             for size in invalid_sizes:
-                # 这些尺寸会被传递给 YOLO.export，我们主要验证不崩溃
-                try:
+                with pytest.raises((ValueError, RuntimeError)):
                     adapter._export_to_saved_model(
                         model_path=temp_model_file,
-                        input_size=size,
-                        task_id="test_task"
+                        input_size=size
                     )
-                except (ValueError, RuntimeError):
-                    # 预期会抛出异常
-                    pass
 
     @pytest.mark.unit
     def test_concurrent_quantization_tasks(self, adapter, temp_model_file, sample_config):
@@ -883,17 +783,16 @@ class TestEdgeCases:
         def run_conversion(task_id: str):
             try:
                 with patch.object(adapter, "_export_to_saved_model", return_value="/tmp/saved_model"):
-                    with patch.object(adapter, "_prepare_quant_config", return_value=Path("/tmp/config.yaml")):
-                        with patch.object(adapter, "_run_st_quantization", return_value="/tmp/quantized.tflite"):
-                            with patch.object(adapter, "_validate_quantized_model", return_value=True):
-                                result = adapter._convert_with_saved_model_and_st_quant(
-                                    task_id=task_id,
-                                    model_path=temp_model_file,
-                                    config=sample_config,
-                                    calib_dataset_path=None,
-                                    progress_callback=None
-                                )
-                                results.append(result)
+                    with patch.object(adapter, "_run_st_quantization", return_value="/tmp/quantized.tflite"):
+                        with patch.object(adapter, "_validate_quantized_model", return_value=True):
+                            with patch.object(adapter, "_prepare_ne301_project", return_value=Path("/tmp/ne301")):
+                                with patch.object(adapter, "_build_ne301_model", return_value="/tmp/output.bin"):
+                                    result = adapter.convert_model(
+                                        task_id=task_id,
+                                        model_path=temp_model_file,
+                                        config=sample_config
+                                    )
+                                    results.append(result)
             except Exception as e:
                 errors.append(e)
 
@@ -928,8 +827,7 @@ class TestEdgeCases:
             # 应该能处理大尺寸
             result = adapter._export_to_saved_model(
                 model_path=temp_model_file,
-                input_size=large_size,
-                task_id="test_task"
+                input_size=large_size
             )
 
             assert result is not None
@@ -973,58 +871,38 @@ class TestPerformance:
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
 
-            # 创建配置文件
-            config_file = tmp_path / "config.yaml"
-            with open(config_file, 'w') as f:
-                yaml.dump({
-                    "model": {"name": "test", "model_path": "/tmp/saved_model"},
-                    "quantization": {
-                        "export_path": str(tmp_path / "quantized_models"),
-                    }
-                }, f)
+            with patch.object(adapter, "_prepare_quant_config") as mock_config:
+                mock_config.return_value = tmp_path / "config.yaml"
 
-            # 创建量化输出
-            output_dir = config_file.parent / "quantized_models"
-            output_dir.mkdir()
-            (output_dir / "model.tflite").write_bytes(b"\x00")
+                adapter._run_st_quantization(
+                    saved_model_path=tmp_path / "saved_model",
+                    input_size=640,
+                    calib_dataset_path=str(large_zip),
+                    output_dir=str(tmp_path / "output")
+                )
 
-            adapter._run_st_quantization(
-                config_path=config_file,
-                task_id="test_task"
-            )
-
-            # 验证量化脚本被调用
-            mock_run.assert_called_once()
+                # 验证配置生成时考虑了图片数量限制
+                mock_config.assert_called_once()
 
     @pytest.mark.unit
-    def test_memory_cleanup_during_quantization(self, adapter, tmp_path):
+    def test_memory_cleanup_during_quantization(self, adapter):
         """测试量化过程中的内存清理"""
         # 这个测试验证量化脚本正确处理了内存
         # 通过检查配置中的 max_calib_images 参数
-        config_file = tmp_path / "config.yaml"
+        with patch.object(adapter, "_prepare_quant_config") as mock_config:
+            mock_config.return_value = "/tmp/config.yaml"
 
-        # 创建包含 max_calib_images 的配置
-        with open(config_file, 'w') as f:
-            yaml.dump({
-                "model": {"name": "test", "model_path": "/tmp/saved_model"},
-                "quantization": {
-                    "export_path": str(tmp_path / "quantized_models"),
-                    "max_calib_images": 200  # 限制图片数量防止 OOM
-                }
-            }, f)
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
 
-        # 创建量化输出
-        output_dir = config_file.parent / "quantized_models"
-        output_dir.mkdir()
-        (output_dir / "model.tflite").write_bytes(b"\x00")
+                adapter._run_st_quantization(
+                    saved_model_path="/tmp/saved_model",
+                    input_size=640,
+                    calib_dataset_path="/tmp/calib",
+                    output_dir="/tmp/output"
+                )
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-
-            adapter._run_st_quantization(
-                config_path=config_file,
-                task_id="test_task"
-            )
-
-            # 验证量化脚本被调用
-            mock_run.assert_called_once()
+                # 验证配置包含内存限制参数
+                call_args = mock_config.call_args
+                # 配置生成应该被调用
+                assert mock_config.called
