@@ -233,9 +233,11 @@ async def convert_model(
             validated_config = ConversionConfig(**config_dict)
             logger.info(f"[DEBUG] validated_config 创建成功: {type(validated_config)}")
 
-            # 5. 读取 YAML 文件(如果提供)
+            # 5. 读取 YAML 文件(如果提供) - 只读取一次
             class_def = None
+            yaml_content = None
             if yaml_file:
+                # 读取一次，后续复用
                 yaml_content = await yaml_file.read()
                 import yaml
                 yaml_data = yaml.safe_load(yaml_content)
@@ -250,8 +252,8 @@ async def convert_model(
                 f.write(await model_file.read())
 
             yaml_path = None
-            if yaml_file:
-                yaml_content = await yaml_file.read()
+            if yaml_file and yaml_content:
+                # 复用已读取的 yaml_content，避免重复读取（UploadFile.read() 只能读取一次）
                 yaml_path = os.path.join(temp_dir, yaml_file.filename)
                 with open(yaml_path, "wb") as f:
                     f.write(yaml_content)
@@ -375,6 +377,7 @@ async def _run_conversion(
         # 准备配置字典（从 Pydantic 模型）
         config_dict = config.dict()
         config_dict["task_id"] = task_id
+        config_dict["yaml_path"] = yaml_path  # ✅ 修复：传递 yaml_path
 
         # 执行转换
         logger.info(f"⏳ 开始执行转换...")

@@ -214,6 +214,124 @@ class TestExportToSavedModel:
 
 
 # ============================================================
+# 1.5 _export_to_quantized_tflite() 函数测试
+# ============================================================
+
+class TestExportToQuantizedTFLite:
+    """测试直接导出量化 TFLite 功能"""
+
+    @pytest.mark.unit
+    def test_export_quantized_tflite_with_fraction_parameter(self, adapter, temp_model_file):
+        """测试 fraction 参数被正确传递给 YOLO.export()"""
+        with patch("ultralytics.YOLO") as mock_yolo:
+            mock_model = MagicMock()
+            mock_model.export.return_value = "/tmp/quantized.tflite"
+            mock_yolo.return_value = mock_model
+
+            config = {
+                "input_size": 640,
+                "num_classes": 80,
+                "fraction": 0.2  # 新增参数
+            }
+
+            adapter._export_to_quantized_tflite(
+                model_path=temp_model_file,
+                input_size=640,
+                calib_dataset_path=None,
+                yaml_path=None,  # 添加缺失的参数
+                config=config
+            )
+
+            # 验证 fraction 参数被传递
+            call_kwargs = mock_model.export.call_args[1]
+            assert "fraction" in call_kwargs
+            assert call_kwargs["fraction"] == 0.2
+
+    @pytest.mark.unit
+    def test_export_quantized_tflite_default_fraction(self, adapter, temp_model_file):
+        """测试未提供 fraction 时使用默认值"""
+        with patch("ultralytics.YOLO") as mock_yolo:
+            mock_model = MagicMock()
+            mock_model.export.return_value = "/tmp/quantized.tflite"
+            mock_yolo.return_value = mock_model
+
+            config = {
+                "input_size": 640,
+                "num_classes": 80
+                # 未提供 fraction
+            }
+
+            adapter._export_to_quantized_tflite(
+                model_path=temp_model_file,
+                input_size=640,
+                calib_dataset_path=None,
+                yaml_path=None,  # 添加缺失的参数
+                config=config
+            )
+
+            # 验证使用默认值 0.2
+            call_kwargs = mock_model.export.call_args[1]
+            assert "fraction" in call_kwargs
+            assert call_kwargs["fraction"] == 0.2  # 默认值
+
+    @pytest.mark.unit
+    def test_export_quantized_tflite_fraction_with_calibration(
+        self, adapter, temp_model_file, temp_calibration_zip
+    ):
+        """测试 fraction 参数与校准数据集配合"""
+        with patch("ultralytics.YOLO") as mock_yolo:
+            mock_model = MagicMock()
+            mock_model.export.return_value = "/tmp/quantized.tflite"
+            mock_yolo.return_value = mock_model
+
+            config = {
+                "input_size": 640,
+                "num_classes": 80,
+                "fraction": 0.3  # 30% 校准数据
+            }
+
+            adapter._export_to_quantized_tflite(
+                model_path=temp_model_file,
+                input_size=640,
+                calib_dataset_path=temp_calibration_zip,
+                yaml_path=None,  # 添加缺失的参数
+                config=config
+            )
+
+            # 验证 data 和 fraction 都被传递
+            call_kwargs = mock_model.export.call_args[1]
+            assert "data" in call_kwargs
+            assert "fraction" in call_kwargs
+            assert call_kwargs["fraction"] == 0.3
+
+    @pytest.mark.unit
+    def test_export_quantized_tflite_custom_fraction(self, adapter, temp_model_file):
+        """测试自定义 fraction 值"""
+        with patch("ultralytics.YOLO") as mock_yolo:
+            mock_model = MagicMock()
+            mock_model.export.return_value = "/tmp/quantized.tflite"
+            mock_yolo.return_value = mock_model
+
+            config = {
+                "input_size": 640,
+                "num_classes": 80,
+                "fraction": 0.5  # 50% 校准数据
+            }
+
+            adapter._export_to_quantized_tflite(
+                model_path=temp_model_file,
+                input_size=640,
+                calib_dataset_path=None,
+                yaml_path=None,  # 添加缺失的参数
+                config=config
+            )
+
+            # 验证自定义 fraction 值被使用
+            call_kwargs = mock_model.export.call_args[1]
+            assert call_kwargs["fraction"] == 0.5
+
+
+# ============================================================
 # 2. _run_st_quantization() 函数测试
 # ============================================================
 
@@ -1028,3 +1146,135 @@ class TestPerformance:
 
             # 验证量化脚本被调用
             mock_run.assert_called_once()
+
+
+# ============================================================
+# 9. yaml_path 参数处理测试
+# ============================================================
+
+class TestYamlPathParameter:
+    """测试 yaml_path 参数的完整处理流程"""
+
+    @pytest.mark.unit
+    def test_export_with_valid_yaml_path(self, adapter, temp_model_file, tmp_path):
+        """测试提供有效的 yaml_path"""
+        # 创建一个有效的 classes.yaml
+        yaml_file = tmp_path / "classes.yaml"
+        with open(yaml_file, 'w') as f:
+            yaml.dump({
+                "names": ["person", "car", "dog"],
+                "nc": 3
+            }, f)
+
+        with patch("ultralytics.YOLO") as mock_yolo:
+            mock_model = MagicMock()
+            mock_model.export.return_value = "/tmp/quantized.tflite"
+            mock_yolo.return_value = mock_model
+
+            config = {"input_size": 640, "num_classes": 3}
+            
+            adapter._export_to_quantized_tflite(
+                model_path=temp_model_file,
+                input_size=640,
+                calib_dataset_path=None,
+                yaml_path=str(yaml_file),
+                config=config
+            )
+
+            # 验证 data 参数被正确传递
+            call_kwargs = mock_model.export.call_args[1]
+            assert "data" in call_kwargs
+            assert call_kwargs["data"] == str(yaml_file)
+
+
+    @pytest.mark.unit
+    def test_export_with_none_yaml_path(self, adapter, temp_model_file):
+        """测试 yaml_path 为 None 时的默认行为"""
+        with patch("ultralytics.YOLO") as mock_yolo:
+            mock_model = MagicMock()
+            mock_model.export.return_value = "/tmp/quantized.tflite"
+            mock_yolo.return_value = mock_model
+
+            config = {"input_size": 640, "num_classes": 80}
+
+            adapter._export_to_quantized_tflite(
+                model_path=temp_model_file,
+                input_size=640,
+                calib_dataset_path=None,
+                yaml_path=None,
+                config=config
+            )
+
+            # 验证 export 被调用
+            mock_model.export.assert_called_once()
+
+
+# ============================================================
+# 10. num_classes 一致性验证测试
+# ============================================================
+
+class TestFractionBoundaryValues:
+    """测试 fraction 参数的边界值"""
+
+    @pytest.mark.unit
+    def test_fraction_zero(self, adapter, temp_model_file):
+        """测试 fraction = 0.0"""
+        with patch("ultralytics.YOLO") as mock_yolo:
+            mock_model = MagicMock()
+            mock_model.export.return_value = "/tmp/quantized.tflite"
+            mock_yolo.return_value = mock_model
+
+            config = {"input_size": 640, "num_classes": 80, "fraction": 0.0}
+
+            adapter._export_to_quantized_tflite(
+                model_path=temp_model_file,
+                input_size=640,
+                calib_dataset_path=None,
+                yaml_path=None,
+                config=config
+            )
+
+            call_kwargs = mock_model.export.call_args[1]
+            assert call_kwargs["fraction"] == 0.0
+
+    @pytest.mark.unit
+    def test_fraction_one(self, adapter, temp_model_file):
+        """测试 fraction = 1.0"""
+        with patch("ultralytics.YOLO") as mock_yolo:
+            mock_model = MagicMock()
+            mock_model.export.return_value = "/tmp/quantized.tflite"
+            mock_yolo.return_value = mock_model
+
+            config = {"input_size": 640, "num_classes": 80, "fraction": 1.0}
+
+            adapter._export_to_quantized_tflite(
+                model_path=temp_model_file,
+                input_size=640,
+                calib_dataset_path=None,
+                yaml_path=None,
+                config=config
+            )
+
+            call_kwargs = mock_model.export.call_args[1]
+            assert call_kwargs["fraction"] == 1.0
+
+    @pytest.mark.unit
+    def test_fraction_half(self, adapter, temp_model_file):
+        """测试 fraction = 0.5"""
+        with patch("ultralytics.YOLO") as mock_yolo:
+            mock_model = MagicMock()
+            mock_model.export.return_value = "/tmp/quantized.tflite"
+            mock_yolo.return_value = mock_model
+
+            config = {"input_size": 640, "num_classes": 80, "fraction": 0.5}
+
+            adapter._export_to_quantized_tflite(
+                model_path=temp_model_file,
+                input_size=640,
+                calib_dataset_path=None,
+                yaml_path=None,
+                config=config
+            )
+
+            call_kwargs = mock_model.export.call_args[1]
+            assert call_kwargs["fraction"] == 0.5
