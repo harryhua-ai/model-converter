@@ -618,10 +618,48 @@ Types: feat, fix, refactor, docs, test, chore, perf, ci
 - 错误处理：明确包装错误并提供上下文
 
 **工具**:
-- **black**: 代码格式化
-- **isort**: 导入排序
+- **black**: 代码格式化（配置：`backend/pyproject.toml`）
+- **isort**: 导入排序（配置：`backend/pyproject.toml`）
 - **ruff**: 代码检查
 - **mypy**: 类型检查
+
+**代码格式化工具**:
+
+项目已配置 **Black** 和 **isort** 来统一代码风格。配置文件位于 `backend/pyproject.toml`：
+
+```toml
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+```
+
+**使用方法**：
+
+```bash
+cd backend
+
+# 格式化代码
+black app/
+isort app/
+
+# 验证代码格式（不修改文件）
+black --check app/
+isort --check app/
+
+# 同时格式化 tools/ 目录
+black tools/
+isort tools/
+```
+
+**最佳实践**：
+- 提交代码前运行 `black app/` 和 `isort app/`
+- 使用 `--check` 参数验证代码格式是否符合标准
+- IDE 中配置自动格式化插件（推荐）
+- CI/CD 流程中添加格式检查
 
 **示例**:
 ```python

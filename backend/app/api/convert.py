@@ -10,7 +10,7 @@ import os
 import tempfile
 import asyncio
 import shutil
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException, Form
 from fastapi.responses import JSONResponse
@@ -93,7 +93,7 @@ async def convert_model(
     config: str = Form(...),
     yaml_file: Optional[UploadFile] = File(None),
     calibration_dataset: Optional[UploadFile] = File(None)
-):
+) -> JSONResponse:
     """
     启动模型转换任务
 
@@ -347,7 +347,7 @@ async def _run_conversion(
     config: ConversionConfig,
     yaml_path: Optional[str] = None,
     calibration_path: Optional[str] = None
-):
+) -> None:
     """
     后台执行模型转换任务
 

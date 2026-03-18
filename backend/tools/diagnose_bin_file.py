@@ -12,32 +12,38 @@ NE301 bin 文件和 OTA header 诊断工具
 python3 diagnose_bin_file.py --bin-path /path/to/model.bin --json-path /path/to/model.json
 """
 
-import struct
-import json
 import argparse
+import json
+import struct
 from pathlib import Path
-from typing import Dict, Any, Tuple
+from typing import Any, Dict, Tuple
+
 
 # 颜色输出
 class Colors:
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    BLUE = '\033[94m'
-    BOLD = '\033[1m'
-    END = '\033[0m'
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    RED = "\033[91m"
+    BLUE = "\033[94m"
+    BOLD = "\033[1m"
+    END = "\033[0m"
+
 
 def print_success(msg: str):
     print(f"{Colors.GREEN}✅ {msg}{Colors.END}")
 
+
 def print_error(msg: str):
     print(f"{Colors.RED}❌ {msg}{Colors.END}")
+
 
 def print_warning(msg: str):
     print(f"{Colors.YELLOW}⚠️  {msg}{Colors.END}")
 
+
 def print_info(msg: str):
     print(f"{Colors.BLUE}ℹ️  {msg}{Colors.END}")
+
 
 def print_header(msg: str):
     print(f"\n{Colors.BOLD}{Colors.BLUE}{'='*60}{Colors.END}")
@@ -90,12 +96,12 @@ class NE301Diagnostics:
     def _load_files(self):
         """加载文件"""
         print_info(f"加载 bin 文件: {self.bin_path}")
-        with open(self.bin_path, 'rb') as f:
+        with open(self.bin_path, "rb") as f:
             self.bin_data = f.read()
 
         if self.json_path and self.json_path.exists():
             print_info(f"加载 JSON 文件: {self.json_path}")
-            with open(self.json_path, 'r') as f:
+            with open(self.json_path, "r") as f:
                 self.json_data = json.load(f)
 
     def _identify_file_type(self) -> str:
@@ -103,7 +109,7 @@ class NE301Diagnostics:
         if len(self.bin_data) < 4:
             return "unknown"
 
-        magic = struct.unpack('<I', self.bin_data[:4])[0]
+        magic = struct.unpack("<I", self.bin_data[:4])[0]
 
         if magic == self.OTA_MAGIC:
             print_success(f"识别为 OTA 包 (magic: 0x{magic:08X})")
@@ -125,14 +131,16 @@ class NE301Diagnostics:
             return
 
         # 读取关键字段
-        magic = struct.unpack('<I', self.bin_data[0x00:0x04])[0]
-        header_version = struct.unpack('<H', self.bin_data[0x04:0x06])[0]
-        header_size = struct.unpack('<H', self.bin_data[0x06:0x08])[0]
-        fw_type = struct.unpack('<B', self.bin_data[0x0C:0x0D])[0]
-        total_size = struct.unpack('<I', self.bin_data[0x18:0x1C])[0]
+        magic = struct.unpack("<I", self.bin_data[0x00:0x04])[0]
+        header_version = struct.unpack("<H", self.bin_data[0x04:0x06])[0]
+        header_size = struct.unpack("<H", self.bin_data[0x06:0x08])[0]
+        fw_type = struct.unpack("<B", self.bin_data[0x0C:0x0D])[0]
+        total_size = struct.unpack("<I", self.bin_data[0x18:0x1C])[0]
 
         print_info(f"Magic: 0x{magic:08X} (期望: 0x{self.OTA_MAGIC:08X})")
-        print_info(f"Header Version: 0x{header_version:04X} (期望: 0x{self.OTA_EXPECTED_VERSION:04X})")
+        print_info(
+            f"Header Version: 0x{header_version:04X} (期望: 0x{self.OTA_EXPECTED_VERSION:04X})"
+        )
         print_info(f"Header Size: {header_size} bytes (期望: {self.OTA_HEADER_SIZE})")
         print_info(f"Firmware Type: 0x{fw_type:02X} (0x04 = AI Model)")
         print_info(f"Total Size: {total_size:,} bytes ({total_size/1024/1024:.2f} MB)")
@@ -175,13 +183,24 @@ class NE301Diagnostics:
         print_header("模型包诊断")
 
         # 读取 header (15 x uint32)
-        header = struct.unpack('<15I', self.bin_data[:60])
-        (magic, version, package_size,
-         metadata_offset, metadata_size,
-         model_config_offset, model_config_size,
-         model_offset, model_size,
-         ext_offset, ext_size,
-         header_checksum, model_checksum, config_checksum, package_checksum) = header
+        header = struct.unpack("<15I", self.bin_data[:60])
+        (
+            magic,
+            version,
+            package_size,
+            metadata_offset,
+            metadata_size,
+            model_config_offset,
+            model_config_size,
+            model_offset,
+            model_size,
+            ext_offset,
+            ext_size,
+            header_checksum,
+            model_checksum,
+            config_checksum,
+            package_checksum,
+        ) = header
 
         print_info(f"Magic: 0x{magic:08X} (期望: 0x{self.MODEL_MAGIC:08X})")
         print_info(f"Version: {version >> 16}.{(version >> 8) & 0xFF}.{version & 0xFF}")
@@ -204,19 +223,19 @@ class NE301Diagnostics:
         print_header("JSON 配置诊断")
 
         # 检查输入尺寸
-        input_spec = self.json_data.get('input_spec', {})
-        width = input_spec.get('width', 0)
-        height = input_spec.get('height', 0)
+        input_spec = self.json_data.get("input_spec", {})
+        width = input_spec.get("width", 0)
+        height = input_spec.get("height", 0)
 
         print_info(f"输入尺寸: {width}x{height}")
 
         # 检查输出规格
-        output_spec = self.json_data.get('output_spec', {})
-        outputs = output_spec.get('outputs', [])
+        output_spec = self.json_data.get("output_spec", {})
+        outputs = output_spec.get("outputs", [])
         if outputs:
             output = outputs[0]
-            output_height = output.get('height', 0)
-            output_width = output.get('width', 0)
+            output_height = output.get("height", 0)
+            output_width = output.get("width", 0)
             print_info(f"输出形状: (1, {output_height}, {output_width})")
 
             # 计算 total_boxes
@@ -234,7 +253,7 @@ class NE301Diagnostics:
                 print_success(f"Total Boxes 正确")
 
         # 检查类别数量
-        num_classes = self.json_data.get('postprocess_params', {}).get('num_classes', 0)
+        num_classes = self.json_data.get("postprocess_params", {}).get("num_classes", 0)
         print_info(f"类别数量: {num_classes}")
 
     def _calculate_expected_boxes(self, input_size: int) -> int:
@@ -263,29 +282,30 @@ class NE301Diagnostics:
         # 检查文件大小
         bin_size_mb = len(self.bin_data) / 1024 / 1024
         if bin_size_mb > 5.5:
-            recommendations.append({
-                "priority": "HIGH",
-                "issue": f"bin 文件过大 ({bin_size_mb:.2f} MB)",
-                "solutions": [
-                    "检查 JSON 配置中的输入尺寸是否正确",
-                    "减少类别数量（如果可能）",
-                    "降低输入尺寸（256 → 192 或 128）",
-                    "使用更小的模型变体"
-                ]
-            })
+            recommendations.append(
+                {
+                    "priority": "HIGH",
+                    "issue": f"bin 文件过大 ({bin_size_mb:.2f} MB)",
+                    "solutions": [
+                        "检查 JSON 配置中的输入尺寸是否正确",
+                        "减少类别数量（如果可能）",
+                        "降低输入尺寸（256 → 192 或 128）",
+                        "使用更小的模型变体",
+                    ],
+                }
+            )
 
         # 检查 JSON 配置（如果有）
         if self.json_data:
-            input_size = self.json_data.get('input_spec', {}).get('width', 0)
+            input_size = self.json_data.get("input_spec", {}).get("width", 0)
             if input_size > 512:
-                recommendations.append({
-                    "priority": "MEDIUM",
-                    "issue": f"输入尺寸较大 ({input_size}x{input_size})",
-                    "solutions": [
-                        "考虑降低到 256x256 或更小",
-                        "在精度和大小之间权衡"
-                    ]
-                })
+                recommendations.append(
+                    {
+                        "priority": "MEDIUM",
+                        "issue": f"输入尺寸较大 ({input_size}x{input_size})",
+                        "solutions": ["考虑降低到 256x256 或更小", "在精度和大小之间权衡"],
+                    }
+                )
 
         # 显示建议
         if recommendations:
@@ -321,4 +341,5 @@ def main():
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(main())

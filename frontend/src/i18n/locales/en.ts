@@ -5,6 +5,9 @@ export const en = {
   
   // Steps
   step1Title: 'Upload Model File',
+  step1Desc: 'Supports PyTorch (.pt, .pth) and ONNX (.onnx) formats, max 500MB',
+  stepRequired: 'Required',
+  stepOptional: 'Optional',
   step2Title: 'Class Definition File',
   step2Desc: 'Uploading a YAML file can automatically detect class count and names',
   step3Title: 'Calibration Dataset',
@@ -24,8 +27,11 @@ export const en = {
   
   // Post-processing
   postprocessingTitle: 'Post-processing Settings',
+  postprocessingDesc: 'These parameters affect detection results during inference',
   confLabel: 'Confidence Threshold',
+  confDesc: 'Detections below this threshold will be filtered out',
   nmsLabel: 'NMS Threshold (IOU)',
+  nmsDesc: 'Used to remove overlapping boxes, lower values mean less overlap tolerance',
   
   // Monitor & Logs
   progressTitle: 'Conversion Progress',
@@ -91,16 +97,36 @@ export const en = {
   viewFullList: 'View full list',
   footerDesc: 'NE301 Model Converter - Convert deep learning models to embedded device formats',
 
+  // Cancel Button
+  cancelling: 'Cancelling...',
+  cancelConversion: 'Cancel Conversion',
+
+  // Calibration Tips
+  calibrationTipTitle: 'Tips:',
+  calibrationTipFormat: 'Format: .zip containing images',
+  calibrationTipSize: 'Size: Max 1GB',
+  calibrationTipCount: 'Recommended: 32-100 images for best quantization',
+
   // Error Messages
   errorUploadFailed: 'Upload failed',
   errorDownloadFailed: 'Download failed',
   errorCancelFailed: 'Cancellation failed',
   errorUnknown: 'Unknown error',
-  errorInvalidModelFormat: 'Invalid format. Supported: .pt, .pth, .onnx',
-  errorModelTooLarge: 'Model too large. Maximum size: 500MB',
-  errorInvalidYamlFormat: 'Invalid format. Supported: .yaml, .yml',
-  errorYamlParseFailed: 'Failed to parse YAML file',
-  errorInvalidZipFormat: 'Invalid format. Supported: .zip',
+  errorInvalidModelFormat: 'Invalid format. Supported: .pt, .pth, .onnx. Please ensure you upload a PyTorch or ONNX model.',
+  errorModelTooLarge: 'Model too large. Maximum size: 100MB. Please try compressing the model or using a smaller variant.',
+  errorInvalidYamlFormat: 'Invalid format. Supported: .yaml, .yml. Please upload a valid YAML class definition file.',
+  errorYamlParseFailed: 'Failed to parse YAML file. Please check the file format and syntax.',
+  errorInvalidZipFormat: 'Invalid format. Supported: .zip. Please pack calibration images into a ZIP file.',
+  errorCalibrationNoImages: 'No images found in calibration ZIP. Supported: .jpg, .jpeg, .png',
+  errorCalibrationBadZip: 'Invalid ZIP file. Please repack using system tools.',
+  errorDiskSpace: 'Insufficient disk space. Please clean up temporary files.',
+  errorServerBusy: 'Server busy, please retry in 30 seconds.',
+  errorConfigInvalid: 'Invalid configuration JSON. Please check all fields.',
+  errorConversionFailed: 'Conversion failed. Please check logs for details.',
+  errorDockerNotAvailable: 'Docker not available. Please ensure Docker is running.',
+  errorQuantizationFailed: 'Quantization failed. Please check model format or try without calibration.',
+  errorMakeFailed: 'NE301 build failed. Please check project configuration.',
+  errorTimeout: 'Operation timed out. Please try with smaller model or dataset.',
 
   // Setup Page
   setupTitle: 'NE301 Model Converter',

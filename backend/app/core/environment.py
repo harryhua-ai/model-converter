@@ -1,8 +1,9 @@
 # backend/app/core/environment.py
-import platform
 import logging
-from app.models.schemas import EnvironmentStatus
+import platform
+
 from app.core.docker_adapter import DockerToolChainAdapter
+from app.models.schemas import EnvironmentStatus
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ class EnvironmentDetector:
                 mode="none",
                 message="Docker 未安装或未启动",
                 error=error,
-                guide=self._get_docker_install_guide()
+                guide=self._get_docker_install_guide(),
             )
 
         # 2. 检查镜像是否存在
@@ -33,15 +34,11 @@ class EnvironmentDetector:
                 mode="docker",
                 message="Docker 已就绪,首次转换时会自动拉取工具镜像",
                 image_size="~3GB",
-                estimated_time="3-5 分钟(取决于网络速度)"
+                estimated_time="3-5 分钟(取决于网络速度)",
             )
 
         # 3. 环境完全就绪
-        return EnvironmentStatus(
-            status="ready",
-            mode="docker",
-            message="环境就绪,可以开始转换"
-        )
+        return EnvironmentStatus(status="ready", mode="docker", message="环境就绪,可以开始转换")
 
     def _get_docker_install_guide(self) -> dict:
         """获取 Docker 安装指南"""
@@ -55,14 +52,14 @@ class EnvironmentDetector:
                     "1. 下载 Docker Desktop for Mac",
                     "2. 打开 .dmg 文件并拖拽到 Applications",
                     "3. 启动 Docker Desktop",
-                    "4. 等待 Docker 启动完成(菜单栏图标)"
-                ]
+                    "4. 等待 Docker 启动完成(菜单栏图标)",
+                ],
             }
         elif system == "Linux":
             return {
                 "title": "安装 Docker Engine",
                 "url": "https://docs.docker.com/engine/install/",
-                "command": "curl -fsSL https://get.docker.com | sh"
+                "command": "curl -fsSL https://get.docker.com | sh",
             }
         elif system == "Windows":
             return {
@@ -73,8 +70,8 @@ class EnvironmentDetector:
                     "2. 运行安装程序",
                     "3. 启用 WSL 2 功能(如果需要)",
                     "4. 重启计算机",
-                    "5. 启动 Docker Desktop"
-                ]
+                    "5. 启动 Docker Desktop",
+                ],
             }
 
         return {}

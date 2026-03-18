@@ -8,13 +8,15 @@ This module defines the data models used throughout the application:
 - EnvironmentStatus: Docker environment check results
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional, Literal
 from datetime import datetime
+from typing import Literal, Optional
+
+from pydantic import BaseModel, Field
 
 
 class ConversionConfig(BaseModel):
     """转换配置"""
+
     model_type: Literal["YOLOv8", "YOLOX"] = "YOLOv8"
     input_size: Literal[256, 480, 640] = 480
     num_classes: int = Field(default=80, ge=1, le=1000)
@@ -29,21 +31,21 @@ class ConversionConfig(BaseModel):
 
 class ClassItem(BaseModel):
     """单个类别定义"""
+
     name: str = Field(..., min_length=1, description="类别名称")
     id: int = Field(..., ge=0, description="类别 ID")
-    color: tuple[int, int, int] | None = Field(
-        default=None,
-        description="RGB 颜色值 (0-255)"
-    )
+    color: tuple[int, int, int] | None = Field(default=None, description="RGB 颜色值 (0-255)")
 
 
 class ClassDefinition(BaseModel):
     """类别定义"""
+
     classes: list[ClassItem] = Field(default_factory=list, description="类别列表")
 
 
 class ConversionTask(BaseModel):
     """转换任务"""
+
     task_id: str
     status: Literal["pending", "running", "completed", "failed"]
     progress: int = Field(default=0, ge=0, le=100)
@@ -59,6 +61,7 @@ class ConversionTask(BaseModel):
 
 class EnvironmentStatus(BaseModel):
     """环境状态"""
+
     status: Literal["ready", "docker_not_installed", "image_pull_required", "not_configured"]
     mode: Literal["docker", "none"]
     message: str

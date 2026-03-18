@@ -92,7 +92,7 @@ export function LogTerminal({ logs, className }: LogTerminalProps) {
       {/* 底部状态栏 */}
       <div className="px-4 py-2 bg-gradient-to-r from-gray-800 to-gray-850 border-t border-gray-700 flex items-center justify-between text-xs">
         <span className="text-gray-500 font-mono">
-          {t('totalLogs')} <span className="text-primary-400 font-semibold">{logs.length}</span> 条日志
+          {t('totalLogs')} <span className="text-primary-400 font-semibold">{logs.length}</span>
         </span>
         <div className="flex items-center gap-2">
           <div className={`w-2 h-2 rounded-full ${logs.length > 0 ? 'bg-success-500 animate-pulse' : 'bg-gray-600'}`} />

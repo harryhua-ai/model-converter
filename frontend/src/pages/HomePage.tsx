@@ -169,14 +169,20 @@ export default function HomePage() {
           <div className="lg:col-span-1 space-y-6">
             {/* Step 1: Upload Model */}
             <section className="card p-6 lg:p-8 hover:shadow-card-hover transition-shadow duration-300 border border-gray-100 dark:border-gray-800">
-              <div className="flex items-center gap-3 mb-4">
+              <div className="flex items-center gap-3 mb-2">
                 <div className="step-indicator bg-gradient-to-br from-primary-500 to-primary-600 shadow-sm">
                   1
                 </div>
                 <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
                   {t('step1Title')}
                 </h2>
+                <span className="px-2 py-0.5 text-xs font-medium bg-error-100 dark:bg-error-900/30 text-error-700 dark:text-error-300 rounded-full">
+                  {t('stepRequired')}
+                </span>
               </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                {t('step1Desc')}
+              </p>
               <ModelUploadArea
                 onFileSelect={setSelectedFile}
                 selectedFile={selectedFile || undefined}
@@ -185,14 +191,20 @@ export default function HomePage() {
 
             {/* Step 2: Upload YAML (Optional) */}
             <section className="card p-6 lg:p-8 hover:shadow-card-hover transition-shadow duration-300 border border-gray-100 dark:border-gray-800">
-              <div className="flex items-center gap-3 mb-4">
+              <div className="flex items-center gap-3 mb-2">
                 <div className="step-indicator bg-gradient-to-br from-primary-500 to-primary-600 shadow-sm">
                   2
                 </div>
                 <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
                   {t('step2Title')}
                 </h2>
+                <span className="px-2 py-0.5 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-full">
+                  {t('stepOptional')}
+                </span>
               </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                {t('step2Desc')}
+              </p>
               <ClassYamlUploadArea
                 onFileSelect={setSelectedYaml}
                 selectedFile={selectedYaml || undefined}
@@ -202,16 +214,20 @@ export default function HomePage() {
 
             {/* Step 3: Upload Calibration Dataset (Optional) */}
             <section className="card p-6 lg:p-8 hover:shadow-card-hover transition-shadow duration-300 border border-gray-100 dark:border-gray-800">
-              <div className="flex items-center gap-3 mb-4">
+              <div className="flex items-center gap-3 mb-2">
                 <div className="step-indicator bg-gradient-to-br from-primary-500 to-primary-600 shadow-sm">
                   3
                 </div>
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                    {t('step3Title')}
-                  </h2>
-                </div>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  {t('step3Title')}
+                </h2>
+                <span className="px-2 py-0.5 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-full">
+                  {t('stepOptional')}
+                </span>
               </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                {t('step3Desc')}
+              </p>
               <CalibrationUploadArea
                 onFileSelect={setSelectedCalibration}
               />
@@ -289,11 +305,14 @@ export default function HomePage() {
 
           {/* Post-processing Config Panel */}
           <section className="card p-6 flex-shrink-0">
-            <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+            <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-2 flex items-center gap-2">
               <RefreshCw className="w-4 h-4 text-primary-500" />
               {t('postprocessingTitle')}
             </h3>
-            
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+              {t('postprocessingDesc')}
+            </p>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Confidence Threshold */}
               <div>
@@ -311,10 +330,7 @@ export default function HomePage() {
                   disabled={state.isConverting}
                   className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
                 />
-                <div className="flex justify-between mt-1 px-0.5">
-                  <span className="text-[10px] text-gray-400">0.01</span>
-                  <span className="text-[10px] text-gray-400">0.99</span>
-                </div>
+                <p className="text-[10px] text-gray-400 mt-1">{t('confDesc')}</p>
               </div>
 
               {/* IOU Threshold */}
@@ -333,10 +349,7 @@ export default function HomePage() {
                   disabled={state.isConverting}
                   className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
                 />
-                <div className="flex justify-between mt-1 px-0.5">
-                  <span className="text-[10px] text-gray-400">0.01</span>
-                  <span className="text-[10px] text-gray-400">0.99</span>
-                </div>
+                <p className="text-[10px] text-gray-400 mt-1">{t('nmsDesc')}</p>
               </div>
             </div>
           </section>

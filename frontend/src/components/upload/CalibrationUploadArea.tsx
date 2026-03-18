@@ -120,9 +120,9 @@ export default function CalibrationUploadArea({
             {t('supportFormatZip')}
           </p>
           <div className="text-xs text-gray-400 dark:text-gray-500 space-y-1">
-            <div>• Format: .zip</div>
-            <div>• Size: Max 1GB</div>
-            <div>• Rec: 32-100 images</div>
+            <div>• {t('calibrationTipFormat')}</div>
+            <div>• {t('calibrationTipSize')}</div>
+            <div>• {t('calibrationTipCount')}</div>
           </div>
         </div>
       ) : (

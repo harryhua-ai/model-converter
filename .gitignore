@@ -53,8 +53,12 @@ outputs/
 *.log
 frontend/dist/
 pytest_cache/
+.pytest_cache/
 .coverage
 htmlcov/
+
+# Vite cache
+node_modules/.vite/
 
 # Environment files
 .env
@@ -84,6 +88,8 @@ conversion_*.png
 
 .design
 CLAUDE.md
-demo
 .agent
 .claude
+tests
+tmp
+logs

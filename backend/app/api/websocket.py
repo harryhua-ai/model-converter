@@ -7,6 +7,7 @@ WebSocket 路由
 import json
 import logging
 from typing import Dict, List, Set
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.task_manager import get_task_manager
@@ -64,10 +65,10 @@ class ConnectionManager:
         """向订阅特定任务的所有连接广播消息"""
         if task_id not in self.active_connections:
             return
-        
+
         # 复制连接集合以避免在迭代时修改
         connections = list(self.active_connections[task_id])
-        
+
         for connection in connections:
             try:
                 await connection.send_json(message)
@@ -117,91 +118,88 @@ async def websocket_endpoint(websocket: WebSocket):
         if action == "subscribe" and task_id:
             # 订阅任务进度
             await manager.connect(websocket, task_id)
-            
+
             task_manager = get_task_manager()
             task = task_manager.get_task(task_id)
-            
+
             if task:
                 # 💡 修复绻端条件：先发送历史日志，再发送状态，避免客户端在收到日志前就因状态而关闭
                 if task.logs:
                     logger.info(f"正在重播 {len(task.logs)} 条历史日志给 task_id={task_id}")
                     for log in task.logs:
-                        await manager.send_personal_message({
-                            "type": "log",
-                            "task_id": task_id,
-                            "log": log,
-                            "timestamp": task.created_at.isoformat(),
-                            "replayed": True  # 标识为重播日志
-                        }, websocket)
+                        await manager.send_personal_message(
+                            {
+                                "type": "log",
+                                "task_id": task_id,
+                                "log": log,
+                                "timestamp": task.created_at.isoformat(),
+                                "replayed": True,  # 标识为重播日志
+                            },
+                            websocket,
+                        )
                     # 发送重播结束标志
-                    await manager.send_personal_message({
-                        "type": "replay_end",
-                        "task_id": task_id,
-                        "count": len(task.logs)
-                    }, websocket)
-                
+                    await manager.send_personal_message(
+                        {"type": "replay_end", "task_id": task_id, "count": len(task.logs)},
+                        websocket,
+                    )
+
                 # 历史日志发完后再发送当前状态
-                await manager.send_personal_message({
-                    "type": "status",
-                    "task_id": task_id,
-                    "data": {
-                        "status": task.status,
-                        "progress": task.progress,
-                        "current_step": task.current_step,
-                        "created_at": task.created_at.isoformat(),
-                        "updated_at": task.updated_at.isoformat()
-                    }
-                }, websocket)
+                await manager.send_personal_message(
+                    {
+                        "type": "status",
+                        "task_id": task_id,
+                        "data": {
+                            "status": task.status,
+                            "progress": task.progress,
+                            "current_step": task.current_step,
+                            "created_at": task.created_at.isoformat(),
+                            "updated_at": task.updated_at.isoformat(),
+                        },
+                    },
+                    websocket,
+                )
             else:
-                await manager.send_personal_message({
-                    "type": "error",
-                    "task_id": task_id,
-                    "data": {
-                        "message": "任务不存在"
-                    }
-                }, websocket)
-        
+                await manager.send_personal_message(
+                    {"type": "error", "task_id": task_id, "data": {"message": "任务不存在"}},
+                    websocket,
+                )
+
         elif action == "cancel":
             # 取消订阅
             if task_id:
-                await manager.send_personal_message({
-                    "type": "cancelled",
-                    "task_id": task_id,
-                    "data": {"message": "取消订阅"}
-                }, websocket)
+                await manager.send_personal_message(
+                    {"type": "cancelled", "task_id": task_id, "data": {"message": "取消订阅"}},
+                    websocket,
+                )
                 await websocket.close()
                 return
         else:
             # 无效的消息
             await websocket.close(code=1008, reason="Invalid message format")
             return
-        
+
         # 保持连接并监听后续消息
         while True:
             data = await websocket.receive_json()
             action = data.get("action")
-            
+
             if action == "cancel":
                 # 取消订阅
-                await manager.send_personal_message({
-                    "type": "cancelled",
-                    "task_id": task_id,
-                    "data": {"message": "取消订阅"}
-                }, websocket)
+                await manager.send_personal_message(
+                    {"type": "cancelled", "task_id": task_id, "data": {"message": "取消订阅"}},
+                    websocket,
+                )
                 break
             elif action == "ping":
                 # 心跳检测
-                await manager.send_personal_message({
-                    "type": "pong",
-                    "task_id": task_id
-                }, websocket)
-    
+                await manager.send_personal_message({"type": "pong", "task_id": task_id}, websocket)
+
     except WebSocketDisconnect:
         logger.info(f"WebSocket 客户端断开连接: task_id={task_id}")
-    
+
     except Exception as e:
         logger.error(f"WebSocket 错误: {e}")
-        
+
     finally:
         # 清理连接
         if task_id:

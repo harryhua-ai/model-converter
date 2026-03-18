@@ -7,6 +7,9 @@ export const zh: TranslationDict = {
   
   // Steps
   step1Title: '上传模型文件',
+  step1Desc: '支持 PyTorch (.pt, .pth) 和 ONNX (.onnx) 格式，最大 500MB',
+  stepRequired: '必填',
+  stepOptional: '可选',
   step2Title: '类别定义文件',
   step2Desc: '上传 YAML 文件可以自动识别类别数量和名称',
   step3Title: '校准数据集',
@@ -26,8 +29,11 @@ export const zh: TranslationDict = {
   
   // Post-processing
   postprocessingTitle: '后处理设置',
+  postprocessingDesc: '这些参数影响模型推理时的检测效果',
   confLabel: '置信度阈值',
+  confDesc: '低于此阈值的检测结果将被过滤',
   nmsLabel: 'NMS 阈值 (IOU)',
+  nmsDesc: '用于去除重叠检测框，值越小重叠容忍度越低',
   
   // Monitor & Logs
   progressTitle: '进度',
@@ -93,16 +99,36 @@ export const zh: TranslationDict = {
   viewFullList: '查看完整列表',
   footerDesc: 'NE301 模型转换器 - 将深度学习模型转换为嵌入式设备格式',
 
+  // Cancel Button
+  cancelling: '取消中...',
+  cancelConversion: '取消转换',
+
+  // Calibration Tips
+  calibrationTipTitle: '提示：',
+  calibrationTipFormat: '格式：包含图片的 .zip 压缩包',
+  calibrationTipSize: '大小：最大支持 1GB',
+  calibrationTipCount: '建议：32-100 张图片可获得最佳量化效果',
+
   // Error Messages
   errorUploadFailed: '上传失败',
   errorDownloadFailed: '下载失败',
   errorCancelFailed: '取消失败',
   errorUnknown: '未知错误',
-  errorInvalidModelFormat: '文件格式不支持。请上传 .pt、.pth 或 .onnx 文件。',
-  errorModelTooLarge: '文件大小超过限制。最大支持 500MB。',
+  errorInvalidModelFormat: '文件格式不支持。请上传 .pt、.pth 或 .onnx 文件。如果是 YOLO 模型，请使用 model.export() 导出。',
+  errorModelTooLarge: '文件大小超过限制。最大支持 100MB。请尝试压缩模型或使用更小的模型变体。',
   errorInvalidYamlFormat: '文件格式不支持。请上传 .yaml 或 .yml 文件。',
-  errorYamlParseFailed: 'YAML 解析失败',
-  errorInvalidZipFormat: '文件格式不支持。请上传 .zip 文件。',
+  errorYamlParseFailed: 'YAML 解析失败。请检查文件格式和语法。',
+  errorInvalidZipFormat: '文件格式不支持。请将校准图片打包成 ZIP 文件。',
+  errorCalibrationNoImages: '校准数据集 ZIP 中未找到图片。支持格式：.jpg, .jpeg, .png',
+  errorCalibrationBadZip: '无效的 ZIP 文件。请使用系统工具重新打包。',
+  errorDiskSpace: '磁盘空间不足。请清理临时文件或旧的转换结果。',
+  errorServerBusy: '服务器繁忙，请 30 秒后重试。',
+  errorConfigInvalid: '配置 JSON 格式无效。请检查所有字段。',
+  errorConversionFailed: '转换失败。请查看日志了解详情。',
+  errorDockerNotAvailable: 'Docker 不可用。请确保 Docker 正在运行。',
+  errorQuantizationFailed: '量化失败。请检查模型格式或尝试不使用校准数据集。',
+  errorMakeFailed: 'NE301 编译失败。请检查项目配置。',
+  errorTimeout: '操作超时。请尝试使用更小的模型或数据集。',
 
   // Setup Page
   setupTitle: 'NE301 模型转换器',

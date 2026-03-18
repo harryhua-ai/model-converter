@@ -5,17 +5,18 @@ NE301 工具链配置管理
 参考核心转换逻辑的实现
 """
 
-import os
-import re
 import json
 import logging
-from pathlib import Path
-from typing import Dict, Optional, Tuple, List
+import os
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 # TensorFlow import (可选)
 try:
     import tensorflow as tf
+
     TENSORFLOW_AVAILABLE = True
 except ImportError:
     TENSORFLOW_AVAILABLE = False
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class NE301Version:
     """NE301 版本信息"""
+
     major: int
     minor: int
     patch: int
@@ -37,10 +39,10 @@ class NE301Version:
         return f"{base}_{self.suffix}" if self.suffix else base
 
     @staticmethod
-    def parse(version_str: str) -> Optional['NE301Version']:
+    def parse(version_str: str) -> Optional["NE301Version"]:
         """从字符串解析版本号"""
         # 支持格式: "2.0.0.0", "2.0.0", "2.0.0.0-alpha"
-        match = re.match(r'(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?(?:-([a-zA-Z0-9]+))?', version_str)
+        match = re.match(r"(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?(?:-([a-zA-Z0-9]+))?", version_str)
         if match:
             major, minor, patch, build, suffix = match.groups()
             return NE301Version(
@@ -48,15 +50,16 @@ class NE301Version:
                 minor=int(minor),
                 patch=int(patch),
                 build=int(build) if build else 0,
-                suffix=suffix or ""
+                suffix=suffix or "",
             )
         return None
 
     @staticmethod
-    def generate_timestamp_version() -> 'NE301Version':
+    def generate_timestamp_version() -> "NE301Version":
         """生成基于时间戳的版本号"""
         # 格式: 2.0.0.BUILD (BUILD 是当天的秒数 % 10000)
         import time
+
         build = int(time.time()) % 10000
         return NE301Version(major=2, minor=0, patch=0, build=build)
 
@@ -68,25 +71,29 @@ class NE301Version:
 @dataclass
 class OTAConfig:
     """OTA 打包配置"""
+
     magic: int = 0x4F544155  # "OTAU"
     header_version: int = 0x0100  # v1.0
     header_size: int = 1024
 
     # 固件类型映射
-    fw_type_map: Dict[str, int] = field(default_factory=lambda: {
-        'fsbl': 0x01,
-        'app': 0x02,
-        'web': 0x03,
-        'ai_model': 0x04,
-        'config': 0x05,
-        'patch': 0x06,
-        'full': 0x07,
-    })
+    fw_type_map: Dict[str, int] = field(
+        default_factory=lambda: {
+            "fsbl": 0x01,
+            "app": 0x02,
+            "web": 0x03,
+            "ai_model": 0x04,
+            "config": 0x05,
+            "patch": 0x06,
+            "full": 0x07,
+        }
+    )
 
 
 @dataclass
 class ModelPackagerConfig:
     """模型打包配置"""
+
     package_magic: int = 0x314D364E  # "N6M1"
     package_version: int = 0x030000  # v3.0.0
 
@@ -150,10 +157,7 @@ class NE301Toolchain:
             # ✅ 修复：允许 minor 和 patch 为 0
             if major is not None and minor is not None and patch is not None:
                 self.version = NE301Version(
-                    major=major,
-                    minor=minor,
-                    patch=patch,
-                    build=build if build is not None else 0
+                    major=major, minor=minor, patch=patch, build=build if build is not None else 0
                 )
                 logger.info(f"✓ 检测到 NE301 版本: {self.version}")
 
@@ -163,15 +167,15 @@ class NE301Toolchain:
     def _extract_version_var(self, content: str, var_name: str, default: int) -> Optional[int]:
         """从 Makefile 内容中提取版本变量"""
         # 匹配: VERSION_MAJOR ?= 2 或 VERSION_MAJOR := 2
-        match = re.search(rf'{var_name}\s*:?=\s*(\d+)', content)
+        match = re.search(rf"{var_name}\s*:?=\s*(\d+)", content)
         return int(match.group(1)) if match else default
 
     def _detect_tools(self) -> None:
         """检测可用的打包工具"""
         tools_to_check = {
-            'ota_packer': self.project_root / self.config.ota_packer_script,
-            'model_packager': self.project_root / self.config.model_packager_script,
-            'version_header': self.project_root / self.config.version_header_script,
+            "ota_packer": self.project_root / self.config.ota_packer_script,
+            "model_packager": self.project_root / self.config.model_packager_script,
+            "version_header": self.project_root / self.config.version_header_script,
         }
 
         for tool_name, tool_path in tools_to_check.items():
@@ -195,7 +199,7 @@ class NE301Toolchain:
             # 查找版本号注释
             # 例如: # Version: 1.0 或 VERSION = "1.0"
             version_matches = [
-                re.search(r'#\s*Version:\s*([\d.]+)', content),
+                re.search(r"#\s*Version:\s*([\d.]+)", content),
                 re.search(r'VE?RSION\s*=\s*["\']([\d.]+)["\']', content),
             ]
 
@@ -217,20 +221,22 @@ class NE301Toolchain:
         logger.info(f"  可用工具:")
         for tool_name, available in self.available_tools.items():
             status = "✓" if available else "✗"
-            version = f" ({self.tool_versions.get(tool_name)})" if tool_name in self.tool_versions else ""
+            version = (
+                f" ({self.tool_versions.get(tool_name)})" if tool_name in self.tool_versions else ""
+            )
             logger.info(f"    {status} {tool_name}{version}")
         logger.info("=" * 50)
 
     def get_ota_packager(self) -> Optional[Path]:
         """获取 OTA 打包工具路径"""
-        tool_name = 'ota_packer'
+        tool_name = "ota_packer"
         if self.available_tools.get(tool_name):
             return self.project_root / self.config.ota_packer_script
         return None
 
     def get_model_packager(self) -> Optional[Path]:
         """获取模型打包工具路径"""
-        tool_name = 'model_packager'
+        tool_name = "model_packager"
         if self.available_tools.get(tool_name):
             return self.project_root / self.config.model_packager_script
         return None
@@ -248,16 +254,18 @@ class NE301Toolchain:
             return NE301Version(3, 0, 0, 1)
 
         try:
-            with open(version_mk, 'r') as f:
+            with open(version_mk, "r") as f:
                 content = f.read()
 
             # ✅ 优先读取 MODEL_VERSION_OVERRIDE（如果定义）
-            model_version_match = re.search(r'MODEL_VERSION_OVERRIDE\s*:?=\s*(\d+\.\d+\.\d+\.\d+)', content)
+            model_version_match = re.search(
+                r"MODEL_VERSION_OVERRIDE\s*:?=\s*(\d+\.\d+\.\d+\.\d+)", content
+            )
 
             if model_version_match:
                 # 使用 MODEL_VERSION_OVERRIDE
                 version_str = model_version_match.group(1)
-                parts = version_str.split('.')
+                parts = version_str.split(".")
 
                 if len(parts) == 4:
                     major, minor, patch, build = map(int, parts)
@@ -282,11 +290,11 @@ class NE301Toolchain:
 
     def supports_ota_package(self) -> bool:
         """检查是否支持 OTA 打包"""
-        return self.available_tools.get('ota_packer', False)
+        return self.available_tools.get("ota_packer", False)
 
     def supports_model_package(self) -> bool:
         """检查是否支持模型打包"""
-        return self.available_tools.get('model_packager', False)
+        return self.available_tools.get("model_packager", False)
 
     def get_best_packaging_method(self) -> str:
         """
@@ -298,11 +306,11 @@ class NE301Toolchain:
             'fallback': 降级到 TFLite
         """
         if self.supports_ota_package():
-            return 'ota'
+            return "ota"
         elif self.supports_model_package():
-            return 'model'
+            return "model"
         else:
-            return 'fallback'
+            return "fallback"
 
     def get_package_name(self, task_id: str, packaging_method: str) -> str:
         """
@@ -317,10 +325,10 @@ class NE301Toolchain:
         """
         version = self.get_model_version()
 
-        if packaging_method == 'ota':
+        if packaging_method == "ota":
             # OTA 固件: ne301_Model_v2.0.0.12345_pkg.bin
             return f"ne301_Model_v{version}_pkg"
-        elif packaging_method == 'model':
+        elif packaging_method == "model":
             # 模型包: ne301_Model_v2.0.0.12345.bin
             return f"ne301_Model_v{version}"
         else:
@@ -329,16 +337,16 @@ class NE301Toolchain:
 
     def get_extension(self, packaging_method: str) -> str:
         """获取文件扩展名"""
-        if packaging_method in ('ota', 'model'):
-            return '.bin'
+        if packaging_method in ("ota", "model"):
+            return ".bin"
         else:
-            return '.tflite'
+            return ".tflite"
 
 
 class NE301ConfigManager:
     """NE301 配置管理器（单例）"""
 
-    _instance: Optional['NE301ConfigManager'] = None
+    _instance: Optional["NE301ConfigManager"] = None
     _cache: Dict[Path, NE301Toolchain] = {}
 
     @classmethod
@@ -375,7 +383,9 @@ def get_ne301_toolchain(ne301_project_path: Path) -> NE301Toolchain:
     return NE301ConfigManager.get_toolchain(ne301_project_path)
 
 
-def extract_tflite_quantization_params(tflite_path: Path) -> Tuple[Optional[float], Optional[int], Optional[Tuple[int, int, int]], Optional[Dict]]:
+def extract_tflite_quantization_params(
+    tflite_path: Path,
+) -> Tuple[Optional[float], Optional[int], Optional[Tuple[int, int, int]], Optional[Dict]]:
     """
     从 TFLite 模型中提取量化参数、输出维度及详细信息
 
@@ -387,7 +397,9 @@ def extract_tflite_quantization_params(tflite_path: Path) -> Tuple[Optional[floa
         All return values are converted to Python native types (JSON serializable)
     """
     if not TENSORFLOW_AVAILABLE:
-        logger.warning("TensorFlow not available, cannot extract quantization parameters from TFLite model")
+        logger.warning(
+            "TensorFlow not available, cannot extract quantization parameters from TFLite model"
+        )
         return None, None, None, None
 
     try:
@@ -398,13 +410,13 @@ def extract_tflite_quantization_params(tflite_path: Path) -> Tuple[Optional[floa
         # Get input details (for data type and shape validation)
         input_details = interpreter.get_input_details()[0]
         input_info = {
-            "dtype": str(input_details['dtype'].__name__),
-            "shape": [int(x) for x in input_details['shape']]
+            "dtype": str(input_details["dtype"].__name__),
+            "shape": [int(x) for x in input_details["shape"]],
         }
 
         # Get output tensor details
         output_details = interpreter.get_output_details()[0]  # Assume only one output
-        output_shape = output_details['shape']  # e.g., [1, 84, 1344]
+        output_shape = output_details["shape"]  # e.g., [1, 84, 1344]
 
         # Convert output_shape to Python native types (handle NumPy int64/int32)
         if output_shape is not None:
@@ -414,16 +426,18 @@ def extract_tflite_quantization_params(tflite_path: Path) -> Tuple[Optional[floa
         output_scale = None
         output_zero_point = None
 
-        if 'quantization_parameters' in output_details:
-            quant_params = output_details['quantization_parameters']
+        if "quantization_parameters" in output_details:
+            quant_params = output_details["quantization_parameters"]
 
-            if quant_params.get('scales') and len(quant_params['scales']) > 0:
-                output_scale = float(quant_params['scales'][0])
+            if quant_params.get("scales") and len(quant_params["scales"]) > 0:
+                output_scale = float(quant_params["scales"][0])
 
-            if quant_params.get('zero_points') and len(quant_params['zero_points']) > 0:
-                output_zero_point = int(quant_params['zero_points'][0])
+            if quant_params.get("zero_points") and len(quant_params["zero_points"]) > 0:
+                output_zero_point = int(quant_params["zero_points"][0])
 
-        logger.info(f"✅ 从 TFLite 模型提取参数: scale={output_scale}, zp={output_zero_point}, out_shape={output_shape}, in_dtype={input_info['dtype']}")
+        logger.info(
+            f"✅ 从 TFLite 模型提取参数: scale={output_scale}, zp={output_zero_point}, out_shape={output_shape}, in_dtype={input_info['dtype']}"
+        )
         return output_scale, output_zero_point, output_shape, input_info
 
     except Exception as e:
@@ -464,7 +478,9 @@ def generate_ne301_json_config(
     """
     # ⭐ 关键修复：从 TFLite 模型自动提取量化参数、输出形状和输入信息
     # 修复解包: extract_tflite_quantization_params 现在返回 4 个值
-    output_scale, output_zero_point, output_shape, input_info = extract_tflite_quantization_params(tflite_path)
+    output_scale, output_zero_point, output_shape, input_info = extract_tflite_quantization_params(
+        tflite_path
+    )
 
     # 使用默认值（如果提取失败）
     output_scale = output_scale if output_scale is not None else 1.0
@@ -492,8 +508,10 @@ def generate_ne301_json_config(
     mean = norm_mean if norm_mean is not None else [0.0, 0.0, 0.0]
     std = norm_std if norm_std is not None else [255.0, 255.0, 255.0]
 
-    logger.info(f"📋 生成 JSON 配置: output_scale={output_scale}, output_zero_point={output_zero_point}, "
-                f"output_height={output_height}, total_boxes={total_boxes}, in_dtype={input_dtype}, pp={postprocess_type}")
+    logger.info(
+        f"📋 生成 JSON 配置: output_scale={output_scale}, output_zero_point={output_zero_point}, "
+        f"output_height={output_height}, total_boxes={total_boxes}, in_dtype={input_dtype}, pp={postprocess_type}"
+    )
 
     return {
         "version": "1.0.0",
@@ -503,7 +521,7 @@ def generate_ne301_json_config(
             "description": f"{model_name} - YOLOv8 Object Detection",
             "type": "OBJECT_DETECTION",
             "framework": "TFLITE",
-            "author": "CamThink"
+            "author": "CamThink",
         },
         "input_spec": {
             "width": input_size,
@@ -511,11 +529,7 @@ def generate_ne301_json_config(
             "channels": 3,
             "data_type": "uint8" if "uint8" in input_dtype.lower() else "float32",
             "color_format": "RGB888_YUV444_1",
-            "normalization": {
-                "enabled": norm_enabled,
-                "mean": mean,
-                "std": std
-            }
+            "normalization": {"enabled": norm_enabled, "mean": mean, "std": std},
         },
         "output_spec": {
             "num_outputs": 1,
@@ -526,18 +540,20 @@ def generate_ne301_json_config(
                     "height": output_height,
                     "width": total_boxes,
                     "channels": 1,
-                    "data_type": "int8" if output_zero_point != 0 or output_scale != 1.0 else "float32",
+                    "data_type": (
+                        "int8" if output_zero_point != 0 or output_scale != 1.0 else "float32"
+                    ),
                     "scale": output_scale,
-                    "zero_point": output_zero_point
+                    "zero_point": output_zero_point,
                 }
-            ]
+            ],
         },
         "memory": {
             "exec_memory_pool": 874512384,
             "exec_memory_size": 1835008,
             "ext_memory_pool": 2415919104,
             "ext_memory_size": 301056,
-            "alignment_requirement": 32
+            "alignment_requirement": 32,
         },
         "postprocess_type": postprocess_type,
         "postprocess_params": {
@@ -548,11 +564,19 @@ def generate_ne301_json_config(
             "max_detections": max_detections,
             "total_boxes": total_boxes,
             "raw_output_scale": output_scale,
-            "raw_output_zero_point": output_zero_point
+            "raw_output_zero_point": output_zero_point,
         },
         "runtime": {
-            "execution": { "mode": "SYNC", "priority": 5, "timeout_ms": 5000 },
-            "memory_management": { "cache_policy": "WRITE_BACK", "memory_pool_size": 2097152, "garbage_collection": False },
-            "debugging": { "log_level": "INFO", "performance_monitoring": True, "memory_profiling": False }
-        }
+            "execution": {"mode": "SYNC", "priority": 5, "timeout_ms": 5000},
+            "memory_management": {
+                "cache_policy": "WRITE_BACK",
+                "memory_pool_size": 2097152,
+                "garbage_collection": False,
+            },
+            "debugging": {
+                "log_level": "INFO",
+                "performance_monitoring": True,
+                "memory_profiling": False,
+            },
+        },
     }

@@ -312,7 +312,12 @@ MIT License
 
 ## 联系方式
 
-如有问题或建议，请通过以下方式联系：
+如有问题或建议，请通过 GitHub Issues 反馈。
 
-- GitHub Issues: [项目地址](https://github.com/yourusername/model-converter)
-- Email: your.email@example.com
+## 相关文档
+
+- [Docker 部署指南](README.docker_cn.md) - 详细 Docker 部署说明
+- [快速开始指南](docs/QUICK_START_cn.md) - 5 分钟快速上手
+- [用户指南](docs/USER_GUIDE_cn.md) - 完整功能说明
+- [Docker Compose 指南](docs/DOCKER_COMPOSE_GUIDE.md) - 配置选项详解
+- [开发文档](CLAUDE.md) - 完整开发文档

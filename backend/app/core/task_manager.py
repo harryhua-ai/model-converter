@@ -177,7 +177,7 @@ class TaskManager:
             self._pending_messages[task_id] = []
             self._send_batch_messages(task_id, messages)
 
-    def _batch_broadcast_worker(self):
+    def _batch_broadcast_worker(self) -> None:
         """后台批量推送工作线程"""
         import time
 
@@ -185,7 +185,7 @@ class TaskManager:
             time.sleep(self.BATCH_INTERVAL_SECONDS)
             self._flush_pending_messages()
 
-    def _flush_pending_messages(self):
+    def _flush_pending_messages(self) -> None:
         """刷新待推送消息"""
         with self._message_lock:
             if not self._pending_messages:
@@ -200,7 +200,7 @@ class TaskManager:
             if messages:
                 self._send_batch_messages(task_id, messages)
 
-    def _send_batch_messages(self, task_id: str, messages: List[Dict[str, Any]]):
+    def _send_batch_messages(self, task_id: str, messages: List[Dict[str, Any]]) -> None:
         """发送批量消息到 WebSocket"""
         import json
 
@@ -246,7 +246,7 @@ class TaskManager:
                 # 移除失效连接
                 self.unregister_websocket(task_id, websocket)
 
-    def register_websocket(self, task_id: str, websocket: Any):
+    def register_websocket(self, task_id: str, websocket: Any) -> None:
         """注册 WebSocket 连接"""
         # 记录当前事件循环，供后台线程使用
         import asyncio
@@ -260,7 +260,7 @@ class TaskManager:
             
         logger.info(f"WebSocket 已注册: task={task_id}, 当前连接数: {len(self.websocket_connections[task_id])}")
 
-    def unregister_websocket(self, task_id: str, websocket: Any):
+    def unregister_websocket(self, task_id: str, websocket: Any) -> None:
         """注销 WebSocket 连接"""
         with self._lock:
             if task_id in self.websocket_connections:
@@ -270,7 +270,7 @@ class TaskManager:
                     self.websocket_connections.pop(task_id, None)
                 logger.info(f"WebSocket 已注销: task={task_id}")
 
-    def complete_task(self, task_id: str, output_filename: str):
+    def complete_task(self, task_id: str, output_filename: str) -> None:
         """标记任务完成"""
         with self._lock:
             if task_id in self.tasks:
@@ -283,7 +283,7 @@ class TaskManager:
         # 立即发送完成通知
         self._queue_status_message(task_id, "completed", output_filename=output_filename)
 
-    def fail_task(self, task_id: str, error: str):
+    def fail_task(self, task_id: str, error: str) -> None:
         """标记任务失败"""
         with self._lock:
             if task_id in self.tasks:
@@ -294,7 +294,7 @@ class TaskManager:
         # 立即发送失败通知
         self._queue_status_message(task_id, "failed", error=error)
 
-    def _queue_status_message(self, task_id: str, status: str, **kwargs):
+    def _queue_status_message(self, task_id: str, status: str, **kwargs) -> None:
         """排队状态消息"""
         # 💡 修复格式：将状态包装在 data 中，与 websocket.py 和前端一致
         message = {
@@ -364,7 +364,7 @@ class TaskManager:
             "active_websockets": len(self.websocket_connections)
         }
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         """关闭任务管理器"""
         self._running = False
         # 刷新剩余消息

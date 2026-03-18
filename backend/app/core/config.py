@@ -9,8 +9,9 @@
 - 生产环境必须显式配置
 """
 
+from typing import List, Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Literal, List
 
 
 class Settings(BaseSettings):
@@ -84,10 +85,7 @@ class Settings(BaseSettings):
         return origins
 
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=True,
-        extra="ignore"
+        env_file=".env", env_file_encoding="utf-8", case_sensitive=True, extra="ignore"
     )
 
 

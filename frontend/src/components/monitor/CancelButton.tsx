@@ -1,5 +1,6 @@
 import { X, StopCircle } from 'lucide-preact';
 import { cn } from './utils';
+import { useI18nStore } from '../../store/i18n';
 
 interface CancelButtonProps {
   onCancel: () => void;
@@ -12,6 +13,8 @@ export function CancelButton({
   isCancelling = false,
   className
 }: CancelButtonProps) {
+  const { t } = useI18nStore();
+
   return (
     <button
       onClick={onCancel}
@@ -31,12 +34,12 @@ export function CancelButton({
       {isCancelling ? (
         <>
           <div class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-          <span>取消中...</span>
+          <span>{t('cancelling')}</span>
         </>
       ) : (
         <>
           <StopCircle class="w-5 h-5 transition-transform group-hover:scale-110" />
-          <span>取消转换</span>
+          <span>{t('cancelConversion')}</span>
         </>
       )}
 

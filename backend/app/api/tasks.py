@@ -6,11 +6,12 @@
 
 import logging
 from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from app.core.task_manager import get_task_manager
 from app.core.performance_monitor import get_performance_monitor
+from app.core.task_manager import get_task_manager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -32,15 +33,12 @@ async def get_task_status(task_id: str):
     """
     task_manager = get_task_manager()
     task = task_manager.get_task(task_id)
-    
+
     if not task:
-        raise HTTPException(
-            status_code=404,
-            detail=f"任务不存在: {task_id}"
-        )
-    
+        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+
     logger.info(f"查询任务状态: {task_id} - {task.status}")
-    
+
     # FastAPI 会自动序列化 Pydantic 模型
     return task
 
@@ -55,7 +53,7 @@ async def list_tasks():
     """
     task_manager = get_task_manager()
     tasks = list(task_manager.tasks.values())
-    
+
     logger.info(f"列出所有任务: 共 {len(tasks)} 个")
 
     return tasks
@@ -79,49 +77,33 @@ async def download_task_output(task_id: str):
     task = task_manager.get_task(task_id)
 
     if not task:
-        raise HTTPException(
-            status_code=404,
-            detail=f"任务不存在: {task_id}"
-        )
+        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
     if task.status != "completed":
-        raise HTTPException(
-            status_code=400,
-            detail=f"任务尚未完成，当前状态: {task.status}"
-        )
+        raise HTTPException(status_code=400, detail=f"任务尚未完成，当前状态: {task.status}")
 
     if not task.output_filename:
-        raise HTTPException(
-            status_code=404,
-            detail="任务输出文件不存在"
-        )
+        raise HTTPException(status_code=404, detail="任务输出文件不存在")
 
     # 构造文件路径
     output_path = Path(task.output_filename)
 
     if not output_path.exists():
         logger.error(f"输出文件不存在: {output_path}")
-        raise HTTPException(
-            status_code=404,
-            detail=f"输出文件不存在: {output_path.name}"
-        )
+        raise HTTPException(status_code=404, detail=f"输出文件不存在: {output_path.name}")
 
     # 确定文件类型和下载名称
     filename = output_path.name
     media_type = "application/octet-stream"
 
-    if filename.endswith('.tflite'):
+    if filename.endswith(".tflite"):
         media_type = "application/x-tflite"
-    elif filename.endswith('.bin'):
+    elif filename.endswith(".bin"):
         media_type = "application/x-binary"
 
     logger.info(f"下载文件: {filename} ({output_path.stat().st_size} bytes)")
 
-    return FileResponse(
-        path=str(output_path),
-        filename=filename,
-        media_type=media_type
-    )
+    return FileResponse(path=str(output_path), filename=filename, media_type=media_type)
 
 
 @router.get("/stats/performance")
@@ -170,11 +152,7 @@ async def get_overview_stats():
     task_stats = task_manager.get_stats()
     perf_stats = performance_monitor.get_aggregate_stats()
 
-    return {
-        "tasks": task_stats,
-        "performance": perf_stats,
-        "timestamp": datetime.now().isoformat()
-    }
+    return {"tasks": task_stats, "performance": perf_stats, "timestamp": datetime.now().isoformat()}
 
 
 @router.delete("/tasks/{task_id}")
@@ -194,10 +172,7 @@ async def delete_task(task_id: str):
     task_manager = get_task_manager()
 
     if task_id not in task_manager.tasks:
-        raise HTTPException(
-            status_code=404,
-            detail=f"任务不存在: {task_id}"
-        )
+        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
     del task_manager.tasks[task_id]
     logger.info(f"删除任务: {task_id}")
@@ -222,10 +197,7 @@ async def cleanup_old_tasks(max_age_hours: int = 24):
 
     logger.info(f"清理过期任务: {tasks_cleaned} 个任务")
 
-    return {
-        "tasks_cleaned": tasks_cleaned,
-        "max_age_hours": max_age_hours
-    }
+    return {"tasks_cleaned": tasks_cleaned, "max_age_hours": max_age_hours}
 
 
 from datetime import datetime

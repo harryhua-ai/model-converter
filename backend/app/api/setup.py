@@ -5,6 +5,7 @@
 """
 
 import logging
+
 from fastapi import APIRouter
 
 from app.core.environment import EnvironmentDetector
@@ -24,19 +25,17 @@ async def check_setup():
     try:
         detector = EnvironmentDetector()
         status = detector.check()
-        
+
         logger.info(f"环境检查: {status.status} - {status.message}")
-        
+
         # FastAPI 会自动序列化 Pydantic 模型
         return status
-        
+
     except Exception as e:
         logger.error(f"环境检查失败: {e}")
         # 返回错误状态
         from app.models.schemas import EnvironmentStatus
+
         return EnvironmentStatus(
-            status="not_configured",
-            mode="none",
-            message=f"环境检查失败: {str(e)}",
-            error=str(e)
+            status="not_configured", mode="none", message=f"环境检查失败: {str(e)}", error=str(e)
         )
