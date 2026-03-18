@@ -1,3 +1,9 @@
+# 本地快速开发配置
+# 用途：使用预构建镜像，启动快（~5秒），适合日常开发
+# 使用：docker-compose -f docker-compose.dev.local.yml up -d
+# 注意：首次使用需要先运行 docker-compose build 构建镜像
+# 详细说明：docs/DOCKER_COMPOSE_GUIDE.md
+
 version: '3.8'
 
 services:

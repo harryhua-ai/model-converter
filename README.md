@@ -13,6 +13,22 @@ PyTorch 模型转换为 NE301 设备可用 .bin 文件的工具。
 
 ### 方式 1: Docker 部署（推荐）
 
+#### Docker Compose 文件说明
+
+本项目提供多个 Docker Compose 配置文件，根据不同使用场景选择：
+
+| 文件 | 用途 | 启动速度 | 适用场景 |
+|------|------|---------|---------|
+| `docker-compose.yml` | **生产部署** ⭐ | ~2 分钟 | 生产环境、首次部署 |
+| `docker-compose.dev.yml` | 开发环境 | ~2 分钟 | 搭建开发环境、修改依赖 |
+| `docker-compose.dev.local.yml` | 本地快速开发 | ~5 秒 | 日常开发、频繁测试 |
+
+**推荐使用：**
+- **生产部署**：使用 `docker-compose.yml`
+- **日常开发**：使用 `docker-compose.dev.local.yml`（最快）
+
+#### 生产部署（推荐）
+
 **单容器部署**（前端 + 后端）:
 ```bash
 # 1. 拉取 NE301 镜像
@@ -33,6 +49,30 @@ docker-compose logs -f
 **停止服务**:
 ```bash
 docker-compose down
+```
+
+**📖 详细说明**:
+- [Docker Compose 使用指南](docs/DOCKER_COMPOSE_GUIDE.md) - 三种配置的详细对比和使用方法
+- [Docker 部署指南](README.docker.md) - 完整的 Docker 部署文档
+
+#### 本地开发（可选）
+
+如果需要本地开发或频繁修改代码：
+
+```bash
+# 1. 首次构建镜像
+docker-compose build
+
+# 2. 使用开发配置（启动快，支持热重载）
+docker-compose -f docker-compose.dev.local.yml up -d
+
+# 3. 修改 Python 代码后自动生效（~2秒）
+# 无需重启容器，代码自动重载
+```
+
+**注意：** 修改 `requirements.txt` 后需要重新构建镜像：
+```bash
+docker-compose build && docker-compose -f docker-compose.dev.local.yml up -d
 ```
 
 ### 方式 2: 本地开发

@@ -1,3 +1,9 @@
+# 开发环境配置
+# 用途：搭建开发环境、DEBUG 模式、修改依赖后验证
+# 使用：docker-compose -f docker-compose.dev.yml up --build
+# 特点：DEBUG 模式启用、详细日志输出
+# 详细说明：docs/DOCKER_COMPOSE_GUIDE.md
+
 version: '3.8'
 
 services:

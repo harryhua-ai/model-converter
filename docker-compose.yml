@@ -1,3 +1,9 @@
+# 生产环境部署配置（默认）
+# 用途：生产部署、首次搭建环境、CI/CD
+# 使用：docker-compose up -d
+# 特点：从源代码构建、包含健康检查、自动重启
+# 详细说明：docs/DOCKER_COMPOSE_GUIDE.md
+
 version: '3.8'
 
 services:
