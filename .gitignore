@@ -82,5 +82,8 @@ conversion_*.png
 # 进程 ID 文件
 *.pid
 
-# 外部依赖（如果不是 submodule）
-# AIToolStack/
+.design
+CLAUDE.md
+demo
+.agent
+.claude
