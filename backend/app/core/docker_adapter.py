@@ -1,7 +1,7 @@
 """
 Docker 工具链适配器（容器化版本 + 性能优化 + 安全加固 + 打包优化）
 
-参考：camthink-ai/AIToolStack/backend/utils/ne301_export.py
+参考：核心转换逻辑适配器
 
 性能优化：
 - 集成性能监控
@@ -41,8 +41,11 @@ from pathlib import Path
 from typing import Callable, Dict, Any, Optional, List
 from functools import lru_cache
 
+import numpy as np
+import re
+
 from .config import settings
-from .ne301_config import get_ne301_toolchain, generate_ne301_json_config
+from .ne301_config import get_ne301_toolchain, generate_ne301_json_config, NE301Version
 from .performance_monitor import get_performance_monitor, PerformanceMonitor
 from .task_manager import get_task_manager
 
@@ -142,6 +145,26 @@ def get_secure_temp_manager() -> SecureTempManager:
     return _secure_temp_manager
 
 
+class TaskManagerLogHandler(logging.Handler):
+    """日志处理器，将日志重定向到 TaskManager 的 WebSocket 推送"""
+    def __init__(self, task_id: str):
+        super().__init__()
+        self.task_id = task_id
+        self.task_manager = get_task_manager()
+        # 设置简单的格式
+        self.setFormatter(logging.Formatter('%(message)s'))
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            # 过滤掉一些过于频繁的进度条式日志（可选）
+            if "byte" in msg.lower() and "%" in msg:
+                return
+            self.task_manager.add_log(self.task_id, msg)
+        except Exception:
+            self.handleError(record)
+
+
 class DockerToolChainAdapter:
     """Docker 工具链适配器（优化版）"""
 
@@ -152,6 +175,9 @@ class DockerToolChainAdapter:
     # 路径映射缓存
     _path_cache: Dict[str, str] = {}
     _path_cache_lock = threading.Lock()
+
+    # NE301 构建锁：防止多个任务并发修改共享的 SDK 目录 (/workspace/ne301)
+    _ne301_lock = threading.Lock()
 
     def __init__(self):
         self.ne301_image = settings.NE301_DOCKER_IMAGE
@@ -208,7 +234,7 @@ class DockerToolChainAdapter:
     def _get_host_path(self, container_path: Path) -> Optional[str]:
         """获取宿主机路径（4级回退机制 + 缓存优化）
 
-        参考 AIToolStack 的实现，确保 Docker-in-Docker 场景下正确映射路径
+        参考转换流程实现，确保 Docker-in-Docker 场景下正确映射路径
 
         Args:
             container_path: 容器内路径
@@ -362,39 +388,47 @@ class DockerToolChainAdapter:
                     progress_callback(10, "正在导出量化 TFLite 模型...")
 
                 quantized_tflite = self._export_to_quantized_tflite(
+                    task_id,
                     model_path,
                     config["input_size"],
                     calib_dataset_path,
+                    yaml_path,
                     config
                 )
                 logger.info(f"✅ 量化 TFLite 导出成功: {quantized_tflite}")
                 task_manager.add_log(task_id, f"✅ 量化 TFLite 导出完成: {Path(quantized_tflite).name}")
 
-            # 步骤 3: 准备 NE301 项目 (60-70%)
-            task_manager.add_log(task_id, "步骤 2/3: 准备 NE301 项目")
-            with self.performance_monitor.measure_step(task_id, "prepare_ne301"):
-                if progress_callback:
-                    progress_callback(70, "正在准备 NE301 项目...")
+            # 步骤 3: 准备 NE301 项目 (60-100%)
+            # 💡 [核心修复] 使用全局锁保护 NE301 SDK 目录，防止并发冲突
+            task_manager.add_log(task_id, "步骤 2/3: 准备与打包 NE301 项目 (独占模式)")
+            with DockerToolChainAdapter._ne301_lock:
+                # 步骤 3: 准备项目
+                with self.performance_monitor.measure_step(task_id, "prepare_ne301"):
+                    if progress_callback:
+                        progress_callback(70, "正在准备 NE301 项目...")
 
-                ne301_project = self._prepare_ne301_project(
-                    task_id,
-                    quantized_tflite,
-                    config,
-                    yaml_path
-                )
-                task_manager.add_log(task_id, "✅ NE301 项目准备完成")
+                    ne301_project = self._prepare_ne301_project(
+                        task_id,
+                        quantized_tflite,
+                        config,
+                        yaml_path
+                    )
+                    task_manager.add_log(task_id, "✅ NE301 项目准备完成")
 
-            # 步骤 4: NE301 打包 (70-100%)
-            task_manager.add_log(task_id, "步骤 3/3: NE301 打包")
-            with self.performance_monitor.measure_step(task_id, "build_ne301"):
-                if progress_callback:
-                    progress_callback(75, "正在生成 NE301 部署包...")
+                # 步骤 4: NE301 打包
+                with self.performance_monitor.measure_step(task_id, "build_ne301"):
+                    if progress_callback:
+                        progress_callback(75, "正在生成 NE301 部署包...")
 
-                bin_path = self._build_ne301_model(
-                    task_id,
-                    ne301_project,
-                    quantized_tflite  # ✅ 传递量化文件路径作为备选
-                )
+                    try:
+                        bin_path = self._build_ne301_model(
+                            task_id,
+                            ne301_project,
+                            quantized_tflite  # ✅ 传递量化文件路径作为备选
+                        )
+                    finally:
+                        # ✅ [优化] 清理 SDK 目录中的临时文件，防止磁盘溢出
+                        self._cleanup_ne301_sdk_artifacts(task_id, ne301_project)
 
             if progress_callback:
                 progress_callback(100, "转换完成!")
@@ -488,14 +522,25 @@ class DockerToolChainAdapter:
 
             logger.info(f"✅ 校准数据集已安全解压到: {extract_dir}")
 
-            # 查找解压后的目录
-            for root, dirs, files in os.walk(extract_dir):
-                image_files = [f for f in files if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-                if image_files:
-                    logger.info(f"✅ 找到校准图片目录: {root} (包含 {len(image_files)} 张图片)")
-                    return root
+            # ✅ 修复：遍历所有目录，查找包含图片最多的目录（忽略 __MACOSX）
+            best_dir = extract_dir
+            max_images = 0
 
-            logger.warning(f"解压后未找到有效的校准图片，将使用解压目录")
+            for root, dirs, files in os.walk(extract_dir):
+                # 忽略 macOS 自动生成的元数据目录
+                if "__MACOSX" in root:
+                    continue
+                
+                image_files = [f for f in files if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                if len(image_files) > max_images:
+                    max_images = len(image_files)
+                    best_dir = root
+
+            if max_images > 0:
+                logger.info(f"✅ 找到最佳校准图片目录: {best_dir} (包含 {max_images} 张图片)")
+                return best_dir
+
+            logger.warning(f"解压后未找到有效的校准图片")
             return extract_dir
 
         except RuntimeError as e:
@@ -513,20 +558,28 @@ class DockerToolChainAdapter:
 
     def _export_to_quantized_tflite(
         self,
+        task_id: str,
         model_path: str,
         input_size: int,
         calib_dataset_path: Optional[str],
+        yaml_path: Optional[str],
         config: Dict[str, Any]
     ) -> str:
-        """步骤 1+2: PyTorch → 量化 TFLite（推荐方法）
+        """步骤 1: PyTorch → 量化 TFLite（Ultralytics 原生 int8 方案）
 
-        直接使用 YOLOv8 的 int8 量化导出，跳过 SavedModel 步骤
-        避免输出形状错误问题（SavedModel 会输出 8400 boxes 而不是 1344）
+        等同于执行：
+            yolo export model=best.pt format=tflite imgsz=256 int8=True data=data.yaml fraction=0.2
+
+        优势：
+        - Ultralytics 内部自动处理 SavedModel → TFLite 转换
+        - quantization_parameters (scale/zero_point) 被正确嵌入到 TFLite 文件中
+        - 与官方 NE301 参考工具链保持一致
 
         Args:
             model_path: PyTorch 模型路径
             input_size: 模型输入尺寸
-            calib_dataset_path: 校准数据集路径（可选）
+            calib_dataset_path: 校准数据集路径（ZIP 文件）
+            yaml_path: YAML 配置文件路径
             config: 转换配置
 
         Returns:
@@ -534,75 +587,288 @@ class DockerToolChainAdapter:
         """
         from ultralytics import YOLO
         import tensorflow as tf
+        import numpy as np
         import tempfile
 
-        logger.info(f"步骤 1+2: 直接导出量化 TFLite（推荐方法）")
+        from .task_manager import get_task_manager
+        tm = get_task_manager()
+
+        logger.info(f"步骤 1: PyTorch → 量化 TFLite（Ultralytics 原生 int8 方案）")
         logger.info(f"  模型: {model_path}")
         logger.info(f"  输入尺寸: {input_size}x{input_size}")
-        logger.info(f"  量化类型: int8")
+        logger.info(f"  量化: Ultralytics int8, format=tflite")
 
-        # 处理校准数据集
-        actual_calib_path = self._extract_calibration_dataset(calib_dataset_path) if calib_dataset_path else None
-
-        # 加载 YOLOv8 模型
         model = YOLO(model_path)
 
-        # ✅ 直接导出量化 TFLite
-        export_args = {
+        # ================================================================
+        # 准备校准数据集 YAML（Ultralytics 需要 data= 参数来找校准图片）
+        # ================================================================
+        calib_yaml_path = None
+
+        if calib_dataset_path:
+            tm.add_log(task_id, "正在解压并优化校准数据集...")
+            actual_calib_path = self._extract_calibration_dataset(calib_dataset_path)
+            
+            # 再次检查目录中是否有图片
+            images = [x for x in Path(actual_calib_path).iterdir() if x.suffix.lower() in ('.jpg', '.jpeg', '.png', '.bmp')]
+            
+            if not images:
+                logger.warning("⚠️  解压后未找到图片，准备生成兜底数据...")
+                actual_calib_path = None
+
+        # 💡 修复：如果没有提供校准集，或者解压后为空，则生成 10 张 Noise 数据进行强制量化
+        # 这样可以确保输出始终是 uint8，满足 NE301 硬件要求
+        if not calib_dataset_path or not actual_calib_path:
+            tm.add_log(task_id, "⚠️ 未提供有效的校准集，正在生成临时兜底数据以确保模型兼容性...")
+            actual_calib_path = tempfile.mkdtemp(prefix="dummy_calib_")
+            import cv2
+            import numpy as np
+            for i in range(10):
+                # 生成随机噪音图片
+                img = np.random.randint(0, 255, (input_size, input_size, 3), dtype=np.uint8)
+                cv2.imwrite(os.path.join(actual_calib_path, f"dummy_{i}.jpg"), img)
+            logger.info(f"✅ 已生成 10 张 {input_size}x{input_size} 兜底图片于 {actual_calib_path}")
+
+        # 生成临时 YAML 文件供 Ultralytics 校准使用
+        calib_yaml_dir = tempfile.mkdtemp(prefix="calib_yaml_")
+
+        # 读取原始 YAML 中的 nc/names
+        nc = config.get("num_classes", 80)
+        names_map = {}
+        if yaml_path and Path(yaml_path).exists():
+            try:
+                import yaml as yaml_lib
+                with open(yaml_path, 'r', encoding='utf-8') as f:
+                    orig_yaml = yaml_lib.safe_load(f)
+                raw_names = orig_yaml.get("names", [])
+                if isinstance(raw_names, list):
+                    names_map = {i: n for i, n in enumerate(raw_names)}
+                elif isinstance(raw_names, dict):
+                    names_map = raw_names
+                
+                # 💡 增加兜底：如果 names_map 仍然为空，或者 nc 不匹配，生成默认名称
+                nc = orig_yaml.get("nc", len(names_map))
+                if not names_map and nc > 0:
+                    names_map = {i: f"class_{i}" for i in range(nc)}
+            except Exception as e:
+                logger.warning(f"⚠️ 读取原始 YAML 失败: {e}")
+                # 极端兜底
+                if nc > 0:
+                    names_map = {i: f"class_{i}" for i in range(nc)}
+
+        # 写临时校准 YAML
+        # 💡 优化：为了消除 Ultralytics "No labels found" 警告，构建标准的 YOLO 数据集结构
+        try:
+            # 创建一个标准的临时数据集目录
+            standard_dataset_dir = get_secure_temp_manager().create_secure_temp_dir(prefix="calib_std_")
+            images_dir = Path(standard_dataset_dir) / "images"
+            labels_dir = Path(standard_dataset_dir) / "labels"
+            images_dir.mkdir(parents=True, exist_ok=True)
+            labels_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 收集所有图片并创建符号链接和空标签
+            source_imgs = [
+                x for x in Path(str(actual_calib_path)).iterdir()
+                if x.suffix.lower() in ('.jpg', '.jpeg', '.png', '.bmp')
+            ]
+            
+            for img_path in source_imgs:
+                # 链接图片
+                target_img = images_dir / img_path.name
+                if not target_img.exists():
+                    try:
+                        os.symlink(img_path, target_img)
+                    except Exception:
+                        shutil.copy2(img_path, target_img)
+                
+                # 创建对应的空标签文件 (满足 Ultralytics 校验)
+                label_file = labels_dir / f"{img_path.stem}.txt"
+                label_file.touch()
+            
+            actual_dataset_root = standard_dataset_dir
+            logger.info(f"  ✅ 已构建标准校准数据集结构: {actual_dataset_root} ({len(source_imgs)} 张图片)")
+        except Exception as e:
+            logger.warning(f"⚠️ 构建标准数据集结构失败: {e}，将回退到简单模式")
+            actual_dataset_root = actual_calib_path
+
+        import yaml as yaml_lib
+        calib_yaml_content = {
+            "path": actual_dataset_root,
+            "train": "images",
+            "val": "images",
+            "nc": nc,
+            "names": names_map,
+        }
+        calib_yaml_path = str(Path(calib_yaml_dir) / "calib_dataset.yaml")
+        with open(calib_yaml_path, 'w', encoding='utf-8') as f:
+            yaml_lib.dump(calib_yaml_content, f)
+
+        calib_img_count = len(source_imgs) if 'source_imgs' in locals() else 0
+        logger.info(f"  ✅ 校准数据集准备完成: {calib_img_count} 张图片 (包含虚拟标签)")
+        tm.add_log(task_id, f"校准数据集就绪: 已补充虚拟标签以优化 Ultralytics 兼容性")
+
+        # ================================================================
+        # Ultralytics 一步导出（等同于 yolo export format=tflite int8=True）
+        # ================================================================
+        # 💡 修复：对于显式提供的校准集，默认比例调整为 1.0 (使用所有图片)
+        fraction = config.get("calib_fraction", 1.0)
+
+        export_args: Dict[str, Any] = {
             "format": "tflite",
             "imgsz": input_size,
-            "int8": True,  # int8 量化
+            "int8": True,
         }
 
-        # 如果有校准数据集，传递 data 参数
-        if actual_calib_path and Path(actual_calib_path).exists():
-            export_args["data"] = actual_calib_path
-            logger.info(f"  使用校准数据集: {actual_calib_path}")
-        else:
-            logger.info(f"  无校准数据集，使用 fake quantization")
+        if calib_yaml_path:
+            export_args["data"] = calib_yaml_path
+            export_args["fraction"] = fraction
 
-        # 执行导出
-        tflite_path = model.export(**export_args)
+        logger.info(f"  Ultralytics 导出参数: {export_args}")
+        logger.info(f"  开始导出（这可能需要几分钟）...")
+        tm.add_log(task_id, f"正在执行 Ultralytics TFLite int8 导出（imgsz={input_size}）...")
 
-        # 验证输出形状
-        logger.info(f"✅ 量化 TFLite 导出成功: {tflite_path}")
+        # ================================================================
+        # 使用自定义日志处理器捕获 Ultralytics 和 TF 的详细日志
+        # ================================================================
+        log_handler = TaskManagerLogHandler(task_id)
+        # 捕获主要的 ML 库日志
+        loggers_to_capture = ["ultralytics", "tensorflow"]
+        
+        # 备份原始处理器并添加我们的处理器
+        original_handlers = {}
+        for name in loggers_to_capture:
+            l = logging.getLogger(name)
+            original_handlers[name] = l.handlers[:]
+            l.addHandler(log_handler)
+            l.setLevel(logging.INFO)
 
         try:
+            tflite_path_raw = model.export(**export_args)
+            tflite_path = Path(str(tflite_path_raw))
+            logger.info(f"  ✅ Ultralytics 导出完成: {tflite_path}")
+
+            # 💡 修复：Ultralytics 默认可能产出 float32 或 int8 输入
+            # 我们需要强制 uint8 输入以适配 NE301
+            model_stem = Path(model_path).stem
+            saved_model_dir = Path(model_path).parent / f"{model_stem}_saved_model"
+            
+            tflite_path = saved_model_dir / "best_uint8_forced.tflite"
+            
+            if saved_model_dir.exists():
+                try:
+                    tm.add_log(task_id, "正在进行强制 uint8 全量化转换（手动修正输入/输出类型）...")
+                    logger.info(f"  正在手动转换 SavedModel -> uint8 TFLite: {saved_model_dir}")
+                    
+                    # 重新构建代表性数据集生成器
+                    def representative_dataset_gen():
+                        # 遍历校准图片
+                        imgs_path = Path(actual_calib_path)
+                        img_files = [x for x in imgs_path.iterdir() if x.suffix.lower() in ('.jpg', '.jpeg', '.png', '.bmp')]
+                        for img_p in img_files[:100]:
+                            import cv2
+                            img = cv2.imread(str(img_p))
+                            if img is None: continue
+                            img = cv2.resize(img, (input_size, input_size))
+                            img = img.astype(np.float32) / 255.0
+                            img = np.expand_dims(img, axis=0)
+                            yield [img]
+
+                    converter = tf.lite.TFLiteConverter.from_saved_model(str(saved_model_dir))
+                    converter.optimizations = [tf.lite.Optimize.DEFAULT]
+                    converter.representative_dataset = representative_dataset_gen
+                    converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+                    converter.inference_input_type = tf.uint8
+                    converter.inference_output_type = tf.int8
+                    
+                    tflite_model = converter.convert()
+                    with open(tflite_path, 'wb') as f:
+                        f.write(tflite_model)
+                    
+                    logger.info(f"  ✅ 手动强制 uint8 转换成功: {tflite_path}")
+                    tm.add_log(task_id, "✅ 手动 TFLite 修正完成 (uint8 input, int8 output)")
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️  手动转换失败: {e}，将尝试扫描扫描候选文件")
+                    tm.add_log(task_id, f"⚠️ 手动修正失败: {e}，尝试查找备选文件")
+            
+            # 如果手动转换没成，扫描候选文件
+            if not tflite_path.exists():
+                candidates = list(saved_model_dir.glob("*full_integer_quant.tflite")) if saved_model_dir.exists() else []
+                if not candidates:
+                    candidates = list(saved_model_dir.glob("*int8*.tflite")) if saved_model_dir.exists() else []
+                if not candidates:
+                    candidates = list(Path(model_path).parent.glob("*int8*.tflite"))
+                
+                if candidates:
+                    tflite_path = candidates[0]
+                    logger.info(f"  ✅ 找到备选 TFLite 文件: {tflite_path}")
+                else:
+                    raise FileNotFoundError(f"Ultralytics 导出后未找到 TFLite 文件: {tflite_path_raw}")
+
+        finally:
+            # 恢复原始处理器
+            for name in loggers_to_capture:
+                l = logging.getLogger(name)
+                l.removeHandler(log_handler)
+
+        logger.info(f"  TFLite 文件大小: {tflite_path.stat().st_size:,} bytes")
+
+        # ================================================================
+        # 验证产物：确认 dtype 和 quantization_parameters
+        # ================================================================
+        try:
             interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
+            interpreter.allocate_tensors()
+
+            input_details = interpreter.get_input_details()[0]
             output_details = interpreter.get_output_details()[0]
+
+            input_dtype = input_details['dtype']
+            output_dtype = output_details['dtype']
             output_shape = output_details['shape']
 
-            logger.info(f"  输出形状: {output_shape}")
+            logger.info(f"  验证结果:")
+            logger.info(f"    输入 dtype: {input_dtype} (期望: uint8)")
+            logger.info(f"    输出 dtype: {output_dtype} (期望: int8)")
+            logger.info(f"    输出形状: {output_shape}")
 
-            # 计算预期的 total_boxes
-            expected_boxes = {
-                256: 1344,  # 3 * (32*32 + 16*16 + 8*8)
-                320: 2100,
-                416: 3549,
-                512: 5376,
-                640: 8400,
-            }
+            if input_dtype != np.uint8:
+                logger.error(f"❌ 输入类型错误: {input_dtype} (期望 uint8)")
+                raise ValueError(f"量化后输入类型错误: {input_dtype}, 期望 uint8")
 
+            if output_dtype != np.int8:
+                logger.error(f"❌ 输出类型错误: {output_dtype} (期望 int8)")
+                raise ValueError(f"量化后输出类型错误: {output_dtype}, 期望 int8")
+
+            # 提取并记录真实 quantization_parameters
+            quant_params = output_details.get('quantization_parameters', {})
+            scales = quant_params.get('scales', [])
+            zero_points = quant_params.get('zero_points', [])
+            if len(scales) > 0:
+                logger.info(f"    ✅ 输出 scale: {scales[0]:.6f}  (真实量化参数)")
+                logger.info(f"    ✅ 输出 zero_point: {zero_points[0]}")
+            else:
+                logger.warning("    ⚠️  未找到输出 quantization_parameters，JSON 配置将使用默认值")
+
+            # 验证 total_boxes
+            expected_boxes = {256: 1344, 320: 2100, 416: 3549, 512: 5376, 640: 8400}
             expected = expected_boxes.get(input_size)
             if expected:
-                actual_boxes = output_shape[2] if len(output_shape) > 2 else output_shape[1]
-
+                actual_boxes = int(output_shape[2]) if len(output_shape) > 2 else int(output_shape[1])
                 if actual_boxes == expected:
-                    logger.info(f"✅ 输出形状正确: {output_shape} (total_boxes={actual_boxes})")
+                    logger.info(f"    ✅ total_boxes 正确: {actual_boxes}")
                 else:
-                    logger.error(f"❌ 输出形状错误！")
-                    logger.error(f"  预期: (1, 34, {expected})")
-                    logger.error(f"  实际: {output_shape}")
-                    raise ValueError(
-                        f"输出形状错误: {output_shape} != (1, 34, {expected})。"
-                        f"这会导致固件大小过大。"
-                    )
-            else:
-                logger.warning(f"无法验证输出形状（未知输入尺寸: {input_size}）")
+                    logger.error(f"    ❌ total_boxes 错误: {actual_boxes} (期望 {expected})")
+                    raise ValueError(f"输出形状错误: total_boxes={actual_boxes}, 期望 {expected}")
 
+            logger.info(f"  ✅ 量化 TFLite 验证通过!")
+            tm.add_log(task_id, f"✅ TFLite 验证通过: input=uint8, output=int8, shape={list(output_shape)}")
+
+        except (ValueError, RuntimeError):
+            raise
         except Exception as e:
-            logger.warning(f"⚠️  无法验证输出形状: {e}")
-            logger.warning("继续处理，但建议手动检查 TFLite 模型输出")
+            logger.warning(f"⚠️  验证时出现异常: {e}")
+            logger.warning("继续处理，但建议手动检查 TFLite 模型")
 
         return str(tflite_path)
 
@@ -615,93 +881,278 @@ class DockerToolChainAdapter:
     ) -> Path:
         """步骤 3: 准备 NE301 项目目录（改进版 - 完整 JSON 配置）
 
-        参考 AIToolStack 的 ne301_export.py
+        参考核心导出逻辑实现
         使用 generate_ne301_json_config() 生成完整配置
+
+        安全修复: 添加 TFLite 输入尺寸验证，防止 JSON 配置错误
         """
         logger.info("步骤 3: 准备 NE301 项目")
+
+        # ✅ 安全验证：从 TFLite 提取实际输入尺寸
+        tflite_input_size = self._extract_input_size_from_tflite(quantized_tflite)
+        config_input_size = config["input_size"]
+
+        logger.info(f"📏 输入尺寸验证:")
+        logger.info(f"  TFLite 实际: {tflite_input_size}x{tflite_input_size}")
+        logger.info(f"  Config 配置: {config_input_size}x{config_input_size}")
+
+        if tflite_input_size > 0 and tflite_input_size != config_input_size:
+            logger.error(f"❌ 输入尺寸不一致！")
+            logger.error(f"  这会导致 bin 文件过大（预期 ~{config_input_size*3//256} MB → 实际 ~{tflite_input_size*3//256} MB）")
+            logger.error(f"  JSON 配置中的输入尺寸将是错误的！")
+
+            # ✅ 严格模式：抛出错误
+            raise ValueError(
+                f"输入尺寸不匹配！TFLite 模型实际输入尺寸为 {tflite_input_size}x{tflite_input_size}，"
+                f"但配置中为 {config_input_size}x{config_input_size}。"
+                f"这会导致 bin 文件大小错误。"
+            )
+
+        logger.info(f"✅ 输入尺寸验证通过: {config_input_size}x{config_input_size}")
 
         # 确保 NE301 项目目录存在
         ne301_project = self.ne301_project_path
         ne301_project.mkdir(parents=True, exist_ok=True)
 
         # 创建 Model 目录结构
-        model_dir = ne301_project / "Model" / "weights"
-        model_dir.mkdir(parents=True, exist_ok=True)
+        model_dir = ne301_project / "Model"
+        weights_dir = model_dir / "weights"
+        weights_dir.mkdir(parents=True, exist_ok=True)
 
-        # 复制 TFLite 模型
+        # 复制 TFLite 模型 (初步放置，后续会有完整版覆盖)
         model_name = f"model_{task_id}"
-        tflite_target = model_dir / f"{model_name}.tflite"
+        tflite_target = weights_dir / f"{model_name}.tflite"
         shutil.copy2(quantized_tflite, tflite_target)
 
         # 从 YAML 文件读取 class_names（如果提供）
         class_names: List[str] = []
         if yaml_path and Path(yaml_path).exists():
             try:
-                with open(yaml_path, 'r') as f:
+                with open(yaml_path, 'r', encoding='utf-8') as f:
                     yaml_data = yaml.safe_load(f)
 
-                # 从 YAML 中提取 class names
-                if 'classes' in yaml_data:
-                    class_names = [cls['name'] for cls in yaml_data['classes']]
-                    logger.info(f"✅ 从 YAML 文件读取到 {len(class_names)} 个类别")
+                # ✅ 修复：支持 'names' 键（Ultralytics YAML 格式）和 'classes' 键
+                if 'names' in yaml_data:
+                    names = yaml_data['names']
+                    if isinstance(names, list):
+                        class_names = names
+                    elif isinstance(names, dict):
+                        class_names = [names[k] for k in sorted(names.keys())]
+                    logger.info(f"✅ 从 YAML 'names' 字段读取到 {len(class_names)} 个类别")
+                elif 'classes' in yaml_data:
+                    class_names = [cls['name'] if isinstance(cls, dict) else str(cls) for cls in yaml_data['classes']]
+                    logger.info(f"✅ 从 YAML 'classes' 字段读取到 {len(class_names)} 个类别")
+
+                # 同时读取 nc
+                if 'nc' in yaml_data:
+                    yaml_nc = yaml_data['nc']
+                    logger.info(f"  YAML nc: {yaml_nc}")
             except Exception as e:
                 logger.warning(f"⚠️  读取 YAML 文件失败: {e}，将使用空类别列表")
 
-        # ✅ 使用 AIToolStack 风格的完整 JSON 配置
+        # ✅ 一致性验证：当 YAML 提供了类别信息，以 YAML 为准自动同步 num_classes
+        num_classes_from_config = config["num_classes"]
+        num_classes_from_yaml = len(class_names)
+
+        if class_names:
+            if num_classes_from_yaml != num_classes_from_config:
+                # 💡 修复：不再抛异常，改为以 YAML 为准自动纠正
+                logger.warning(
+                    f"⚠️ num_classes 不一致 (config={num_classes_from_config}, yaml={num_classes_from_yaml})，"
+                    f"以 YAML 为准自动纠正"
+                )
+                config["num_classes"] = num_classes_from_yaml
+                num_classes_from_config = num_classes_from_yaml
+
+            logger.info(f"✅ num_classes 已对齐: {num_classes_from_config}")
+        else:
+            logger.warning(f"⚠️  未提供 YAML 文件或无类别信息")
+            logger.warning(f"  使用 config 中的值: {num_classes_from_config}")
+
+        # ✅ 使用完整满足 NE301 要求的 JSON 配置
         json_config = generate_ne301_json_config(
             tflite_path=Path(quantized_tflite),
             model_name=model_name,
             input_size=config["input_size"],
             num_classes=config["num_classes"],
             class_names=class_names,
-            confidence_threshold=config.get("confidence_threshold", 0.25),
+            confidence_threshold=config.get("confidence_threshold", 0.25), # 默认为 0.25 (与 demo 配置一致)
+            iou_threshold=config.get("iou_threshold", 0.45),              # 默认为 0.45 (与 demo 配置一致)
+            postprocess_type=config.get("postprocess_type"),             # 允许从外部配置强制指定
+            norm_mean=config.get("normalization_mean"),                  # 归一化均值
+            norm_std=config.get("normalization_std"),                    # 归一化标准差
         )
 
-        # ✅ 调试日志：验证 JSON 配置完整性
-        config_size = len(json.dumps(json_config, indent=2))
-        logger.info(f"📊 生成的 JSON 配置大小: {config_size} 字节")
+        # ✅ 处理 numpy 类型以防 JSON 序列化失败
 
-        if config_size < 1000:
-            logger.warning(f"⚠️  JSON 配置过小，可能不完整")
-            logger.debug(f"JSON 配置内容:\n{json.dumps(json_config, indent=2)}")
-        else:
-            logger.info(f"✅ JSON 配置大小正常（完整配置）")
+        def convert_numpy(obj):
+            """递归将 numpy 类型转为 Python 原生类型"""
+            if isinstance(obj, dict):
+                return {k: convert_numpy(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy(v) for v in obj]
+            elif isinstance(obj, (np.integer,)):
+                return int(obj)
+            elif isinstance(obj, (np.floating,)):
+                return float(obj)
+            elif isinstance(obj, (np.ndarray,)):
+                return obj.tolist()
+            return obj
+
+        json_config = convert_numpy(json_config)
+
+        # ✅ [核心修复] 将 TFLite 和 JSON 文件放置在 Model/weights/ 目录下
+        # 此路径是 Model/Makefile 中定义的 WEIGHTS_DIR
+        # 已经在上方 mkdir 过了
+        
+        # 复制最终版 TFLite 模型
+        ne301_tflite_path = weights_dir / f"{model_name}.tflite"
+        shutil.copy2(quantized_tflite, ne301_tflite_path)
+        logger.info(f"✅ TFLite 模型已复制到 weight 目录: {ne301_tflite_path}")
 
         # 写入 JSON 配置
-        json_file = model_dir / f"{model_name}.json"
+        json_file = weights_dir / f"{model_name}.json"
         with open(json_file, "w") as f:
             json.dump(json_config, f, indent=2)
 
-        # ✅ 验证文件写入
         file_size = json_file.stat().st_size
-        logger.info(f"✅ JSON 文件已写入: {json_file} ({file_size} 字节)")
+        logger.info(f"✅ JSON 文件已写入 weights 目录: {json_file} ({file_size} 字节)")
 
-        if file_size < 1000:
-            logger.warning(f"⚠️  JSON 文件过小，请检查配置生成逻辑")
+        # ✅ 更新 Docker 命名卷内 Model/Makefile 的 MODEL_NAME
+        # 注意：只修改 ne301_workspace 卷内的文件，不修改本地 ne301/ 目录
+        model_makefile = ne301_project / "Model" / "Makefile"
+        if model_makefile.exists():
+            makefile_content = model_makefile.read_text()
 
-        # ✅ 优化：不再修改 NE301 SDK 源码（Makefile）
-        # 参考：NE301 打包环节优化计划 - 问题 1: 源码修改导致 SDK 升级困难
-        #
-        # 之前的实现会修改 Model/Makefile 的 MODEL_NAME 变量，这会导致：
-        # 1. 污染 NE301 SDK 源码，阻碍独立升级
-        # 2. 多任务并发时 Makefile 冲突
-        #
-        # ✅ 当前方案：使用 Make 命令行参数传递 MODEL_NAME
-        # - 代码简洁：移除符号链接操作（减少 15 行）
-        # - 并发安全：每个任务独立 MODEL_NAME，无文件冲突
-        # - 性能提升：减少文件系统操作开销
-        # - 零源码修改：保持 SDK Makefile 不变
+            # 使用 sed 风格替换 MODEL_NAME 行
+            # 1. 替换 MODEL_NAME
+            new_content = re.sub(
+                r'^MODEL_NAME\s*=\s*.*$',
+                f'MODEL_NAME = {model_name}',
+                makefile_content,
+                flags=re.MULTILINE
+            )
+            # 2. 确保 MODEL_TFLITE 和 MODEL_JSON 使用变量引用 (不写死路径)
+            new_content = re.sub(
+                r'^MODEL_TFLITE\s*=\s*.*$',
+                'MODEL_TFLITE = $(WEIGHTS_DIR)/$(MODEL_NAME).tflite',
+                new_content,
+                flags=re.MULTILINE
+            )
+            new_content = re.sub(
+                r'^MODEL_JSON\s*=\s*.*$',
+                'MODEL_JSON = $(WEIGHTS_DIR)/$(MODEL_NAME).json',
+                new_content,
+                flags=re.MULTILINE
+            )
+            # 3. 替换 RELOC_CONFIG，强制使用 yolov8_od 以获取最佳权重分离
+            new_content = re.sub(
+                r'^RELOC_CONFIG\s*=\s*.*$',
+                f'RELOC_CONFIG = yolov8_od@neural_art_reloc.json',
+                new_content,
+                flags=re.MULTILINE
+            )
+
+            if new_content != makefile_content:
+                model_makefile.write_text(new_content)
+                logger.info(f"✅ 已更新 Model/Makefile (MODEL_NAME 和 RELOC_CONFIG)")
+            else:
+                logger.warning(f"⚠️  Model/Makefile 中未找到配置行")
+        else:
+            logger.warning(f"⚠️  Model/Makefile 不存在: {model_makefile}")
+
+        # ✅ [优化] 压缩二进制大小：修改内存池配置
+        # 同时修改 yolov8_od 和 reloc-ro 相关的 mpool 确保生效
+        for mpool_name in ["stm32n6_reloc_yolov8_od.mpool", "stm32n6_reloc_ro.mpool"]:
+            mpool_file = ne301_project / "Model" / "mpools" / mpool_name
+            if mpool_file.exists():
+                try:
+                    lines = mpool_file.read_text().splitlines()
+                    new_lines = []
+                    context = None
+                    
+                    for line in lines:
+                        if '"name":' in line:
+                            if '"hyperRAM"' in line:
+                                context = "hyperRAM"
+                            elif '"octoFlash"' in line:
+                                context = "octoFlash"
+                            else:
+                                context = None
+                                
+                        if context == "hyperRAM" and '"constants_preferred":' in line:
+                            line = line.replace('"true"', '"false"')
+                        elif context == "octoFlash":
+                            if '"constants_preferred":' in line:
+                                line = line.replace('"false"', '"true"')
+                            if '"size":' in line and '"value": "0"' in line:
+                                line = line.replace('"value": "0"', '"value": "64"')
+                                
+                        new_lines.append(line)
+                    
+                    content = "\n".join(new_lines)
+                    if content != mpool_file.read_text():
+                        mpool_file.write_text(content)
+                        logger.info(f"✅ 已成功优化内存池配置 ({mpool_name})")
+                    else:
+                        logger.warning(f"⚠️  未检测到需要修改的内存池配置 ({mpool_name})")
+                except Exception as e:
+                    logger.warning(f"⚠️  优化内存池 {mpool_name} 失败: {e}")
 
         logger.info(f"✅ 模型文件已准备: {model_name}.tflite")
         logger.info(f"✅ JSON 配置已生成: {model_name}.json")
         logger.info(f"✅ 配置参数: input_size={config['input_size']}, num_classes={config['num_classes']}")
-        logger.info(f"✅ 保持 SDK Makefile 不变（通过命令行参数传递 MODEL_NAME）")
 
-        # 返回 Model 目录路径（不是 workspace 根目录）
+        # 返回 Model 目录路径
         model_project_dir = ne301_project / "Model"
         logger.info(f"✅ NE301 项目准备完成: {model_project_dir}")
-        logger.info(f"✅ JSON 配置文件: {json_file}")
         return model_project_dir
+
+    def _extract_input_size_from_tflite(self, tflite_path: str) -> int:
+        """从 TFLite 模型提取实际输入尺寸
+
+        安全验证：确保配置中的 input_size 与 TFLite 模型匹配
+
+        Args:
+            tflite_path: TFLite 模型文件路径
+
+        Returns:
+            int: 输入尺寸（height/width），如果提取失败返回 -1
+        """
+        try:
+            import tensorflow as tf
+
+            logger.info(f"🔍 正在从 TFLite 提取输入尺寸: {tflite_path}")
+
+            interpreter = tf.lite.Interpreter(model_path=tflite_path)
+            input_details = interpreter.get_input_details()
+
+            if not input_details:
+                logger.warning("⚠️  TFLite 模型没有输入张量")
+                return -1
+
+            input_shape = input_details[0]['shape']
+            # input_shape = [batch, height, width, channels]
+
+            if len(input_shape) != 4:
+                logger.warning(f"⚠️  输入形状不是 4D: {input_shape}")
+                return -1
+
+            height = int(input_shape[1])
+            width = int(input_shape[2])
+
+            if height != width:
+                logger.warning(f"⚠️  输入不是正方形: {height}x{width}")
+
+            logger.info(f"✅ TFLite 输入尺寸: {height}x{width}")
+            return height
+
+        except ImportError:
+            logger.warning("⚠️  TensorFlow 未安装，无法验证 TFLite 输入尺寸")
+            return -1
+        except Exception as e:
+            logger.warning(f"⚠️  无法从 TFLite 提取输入尺寸: {e}")
+            return -1
 
     def _build_ne301_model(
         self,
@@ -711,7 +1162,7 @@ class DockerToolChainAdapter:
     ) -> str:
         """步骤 4: 调用 NE301 容器打包（改进版 - 架构感知）
 
-        参考 AIToolStack 的 _build_with_docker() 实现
+        参考基础镜像构建实现
         支持在 ARM64 环境下通过 QEMU 模拟执行 NE301 打包
 
         Args:
@@ -812,10 +1263,12 @@ class DockerToolChainAdapter:
         logger.info("🎯 使用 OTA 固件打包（推荐）")
 
         # 执行 make pkg-model（已经包含 OTA header）
-        pkg_bin_path = self._make_model(task_id, ne301_project_path, model_name)
+        # 💡 传入版本信息
+        pkg_bin_path = self._make_model(task_id, ne301_project_path, model_name, toolchain.version)
 
         # pkg-model 已经生成了带 OTA header 的固件，直接返回
-        logger.info(f"✅ OTA 固件已生成: {pkg_bin_path.name}")
+        from pathlib import Path
+        logger.info(f"✅ OTA 固件已生成: {Path(pkg_bin_path).name}")
         return str(pkg_bin_path)
 
     def _build_model_package(
@@ -832,12 +1285,13 @@ class DockerToolChainAdapter:
         logger.info("🎯 使用纯模型打包（备用）")
 
         # 执行 make model
-        model_bin_path = self._make_model(task_id, ne301_project_path, model_name)
+        # 💡 传入版本信息
+        model_bin_path = self._make_model(task_id, ne301_project_path, model_name, toolchain.version)
 
         # 直接返回模型包
-        return model_bin_path
+        return str(model_bin_path)
 
-    def _make_model(self, task_id: str, ne301_project_path: Path, model_name: str = None) -> Path:
+    def _make_model(self, task_id: str, ne301_project_path: Path, model_name: str = None, version: Optional[NE301Version] = None) -> str:
         """启动 NE301 容器执行 make 命令（安全加固版本）
 
         修复：CRITICAL-2026-003 - Docker 容器安全配置
@@ -846,6 +1300,7 @@ class DockerToolChainAdapter:
             task_id: 任务 ID
             ne301_project_path: NE301 项目路径
             model_name: 模型名称（用于 Make 命令行参数）
+            version: 版本信息
 
         Returns:
             生成的 .bin 文件路径
@@ -861,28 +1316,58 @@ class DockerToolChainAdapter:
         logger.info(f"  使用 NE301 镜像: {self.ne301_image}")
         logger.info(f"  模型名称: {model_name}")
 
-        # 关键修复：NE301 镜像的工作目录是 /workspace，所以挂载命名卷到 /workspace
-        # 而不是子目录 /workspace/ne301
-        volumes = {
-            "ne301_workspace": {"bind": "/workspace", "mode": "rw"}
-        }
+        tm = get_task_manager()
+
+        # 关键修复：确保 builder 容器看到的是 API 正在操作的同一个项目目录
+        # 我们使用 _get_host_path 获取宿主机上的实际路径并进行挂载
+        host_project_path = self._get_host_path(self.ne301_project_path)
+        if not host_project_path:
+             logger.warning(f"  ⚠️ 无法获取 {self.ne301_project_path} 的宿主机路径，回退到普通卷处理")
+             volumes = {"ne301_workspace": {"bind": "/workspace", "mode": "rw"}}
+        else:
+             # 将宿主机的 ne301/ 目录直接挂载到 builder 的 /workspace
+             # 这样 builder 内的 /workspace 就是 SDK 根目录
+             volumes = {
+                 host_project_path: {"bind": "/workspace", "mode": "rw"}
+             }
+             logger.info(f"  ✓ 已挂载宿主机路径: {host_project_path} -> /workspace")
 
         # 创建临时容器名（使用随机 hex 避免冲突）
         import secrets
         container_name = "ne301-builder-" + secrets.token_hex(4)
 
+        # Clean the build directory BEFORE starting to ensure we only catch the NEW package
+        build_dir = self.ne301_project_path / "build"
+        if build_dir.exists():
+            logger.info(f"  🧹 清理构建目录中的旧包: {build_dir}")
+            for old_pkg in build_dir.glob("*_pkg.bin"):
+                try:
+                    old_pkg.unlink()
+                except Exception as e:
+                    logger.warning(f"  ⚠️ 无法删除旧包 {old_pkg}: {e}")
+
+        # 构造版本覆盖参数
+        # 💡 [CRITICAL] 修复：不再使用 $(make version) 这种会导致 empty variable name 报错的子 shell
+        # 而是直接从 host 传递解析好的版本数值。
+        make_extra_args = []
+        if version:
+            make_extra_args.append(f"VERSION_MAJOR={version.major}")
+            make_extra_args.append(f"VERSION_MINOR={version.minor}")
+            make_extra_args.append(f"VERSION_PATCH={version.patch}")
+            make_extra_args.append(f"VERSION_BUILD={version.build}")
+
+        extra_args_str = " ".join(make_extra_args)
+
         # 关键修复：make pkg-model 必须在 SDK 根目录执行
-        # 需要设置环境变量并加载 ST Edge AI 环境
-        # 使用 bash -l 来确保加载 /etc/profile.d/ 中的脚本
-        #
-        # ✅ 优化：通过命令行参数传递 MODEL_NAME（移除符号链接）
-        # - 每个任务独立的 MODEL_NAME
-        # - 并发安全，无需文件锁
-        # - 性能提升，减少文件系统操作
-        make_cmd = f"bash -lc 'cd /workspace && make pkg-model MODEL_NAME={model_name}'"
+        # ✅ 使用 make pkg-model 执行完整的 NE301 构建流程
+        make_cmd = [
+            "bash", "-lc",
+            f"cd /workspace && make clean-model model pkg-model {extra_args_str}"
+        ]
 
         logger.info(f"  启动 NE301 容器: {container_name}")
-        logger.info(f"  执行命令: {make_cmd}")
+        logger.info(f"  执行命令: {' '.join(make_cmd)}")
+        logger.info(f"  模型名称 (MODEL_NAME): {model_name}")
         logger.info(f"  挂载卷: ne301_workspace -> /workspace")
 
         container = None
@@ -891,7 +1376,7 @@ class DockerToolChainAdapter:
             # ✅ 安全加固：启动临时容器执行 make（添加安全配置）
             container = self.client.containers.run(
                 self.ne301_image,
-                command=["bash", "-c", make_cmd],  # ✅ 使用列表形式，避免 shell 注入
+                command=make_cmd,  # ✅ 直接传 list，Docker 不再通过 sh -c 包装
                 volumes=volumes,
                 name=container_name,
                 auto_remove=False,  # 不自动删除，手动管理
@@ -921,7 +1406,7 @@ class DockerToolChainAdapter:
 
                 # 文件系统（tmpfs 用于临时文件）
                 tmpfs={
-                    "/tmp": "rw,noexec,nosuid,size=512m"
+                    "/tmp": "rw,exec,nosuid,size=512m"
                 },
 
                 # 只读根文件系统（可选，可能影响某些操作）
@@ -929,37 +1414,74 @@ class DockerToolChainAdapter:
             )
 
             logger.info(f"  ✓ NE301 容器已启动: {container.id[:12]}")
+            tm.add_log(task_id, f"容器已启动，开始编译打包 (ID: {container.id[:12]})...")
+
+            # ✅ 实时流式读取容器日志
+            def stream_logs():
+                try:
+                    for line in container.logs(stream=True, follow=True):
+                        log_line = line.decode("utf-8").strip()
+                        if log_line:
+                            tm.add_log(task_id, log_line)
+                except Exception as e:
+                    logger.warning(f"日志流读取中断: {e}")
+
+            # 在后台线程启动日志流处理
+            log_thread = threading.Thread(target=stream_logs, daemon=True)
+            log_thread.start()
 
             # 等待容器执行完成
-            result = container.wait(timeout=300)  # 5分钟超时
+            result = container.wait(timeout=600)  # 增加到 10 分钟超时
+            logger.info(f"  容器已退出，退出码: {result.get('StatusCode')}")
 
-            # 获取容器日志（在容器删除之前）
-            try:
-                logs = container.logs(tail=100).decode("utf-8")
-                if logs:
-                    logger.debug(f"  容器日志:\n{logs}")
-            except Exception as e:
-                logger.warning(f"  获取容器日志失败: {e}")
+            # 稍微等待日志流处理完成 (1秒)
+            log_thread.join(timeout=1.0)
             # 检查输出文件是否生成
-            # pkg-model 生成文件名格式：ne301_Model_v{version}_pkg.bin
-            # 文件在 SDK 根目录的 build/ 目录，不是 Model/build/
+            # 💡 [极简 & 稳健方案]: 既然我们在 build 前已经清空了 *_pkg.bin，
+            # 那么现在 build/ 目录下唯一生成的那个就是我们要的。
             build_dir = self.ne301_project_path / "build"
-            pkg_files = sorted(
-                build_dir.glob("ne301_Model_v*_pkg.bin"),
+            target_pkg_files = sorted(
+                build_dir.glob("*_pkg.bin"),
                 key=lambda p: p.stat().st_mtime,
                 reverse=True
             )
 
-            if pkg_files:
-                output_bin = pkg_files[0]  # 最新的文件
-                file_size = output_bin.stat().st_size
-                logger.info(f"  ✓ make pkg-model 完成，输出文件: {output_bin.name} ({file_size:,} bytes)")
-                # 退出码非零但文件存在，可能是 QEMU 模拟问题
-                if result["StatusCode"] != 0:
-                    logger.warning(f"  ⚠️  容器退出码: {result['StatusCode']}（可能为 QEMU 模拟问题，但输出文件有效）")
+            target_output = None
+            if target_pkg_files:
+                target_output = target_pkg_files[0]
+                logger.info(f"  ✓ 捕获到新生成的包: {target_output.name}")
+            
+            if target_output and target_output.exists():
+                # 找到目标文件
+                file_size = target_output.stat().st_size
+                logger.info(f"  ✓ make 流程完成，输出文件: {target_output.name} ({file_size:,} bytes)")
+                tm.add_log(task_id, f"✅ NE301 打包完成: {target_output.name} ({file_size // 1024}KB)")
+
+                # 复制到 outputs 目录中，使用 task_id 作为文件名前缀以避免冲突
+                outputs_dir = Path("/app/outputs")
+                outputs_dir.mkdir(parents=True, exist_ok=True)
+                
+                # 为了保持输出文件名友好，如果是 model_ 开头说明是临时名，优先展示原名
+                # target_output.name 可能是 yolov8n_... 或 model_uuid_...
+                final_output_name = f"{task_id}_{target_output.name}"
+                output_bin = outputs_dir / final_output_name
+
+                # 复制
+                import shutil
+                shutil.copy2(str(target_output), str(output_bin))
+                logger.info(f"  ✓ 输出文件已复制到: {output_bin}")
+
+                # 💡 返回最终生成的 .bin 文件路径 (用于后续下载)
+                return str(output_bin)
             else:
-                logger.error(f"  ✗ make 失败，退出码: {result['StatusCode']}，输出文件不存在")
-                raise RuntimeError(f"make pkg-model 失败: exit code {result['StatusCode']}, 输出文件未生成")
+                # 严格模式：如果退出码非零且没有生成输出文件，则报错
+                if result["StatusCode"] != 0:
+                    logger.error(f"  ✗ make 失败，退出码: {result['StatusCode']}")
+                    raise RuntimeError(f"make pkg-model 失败 (exit code {result['StatusCode']})，未生成输出文件。")
+                else:
+                    logger.error(f"  ✗ make 成功但未在 build/ 目录找到任何 *_pkg.bin 文件")
+                    logger.error(f"  build/ 目录内容: {list(build_dir.iterdir()) if build_dir.exists() else 'dir not found'}")
+                    raise RuntimeError(f"make pkg-model 成功但输出文件未生成")
 
         finally:
             # 手动删除容器
@@ -1124,157 +1646,30 @@ class DockerToolChainAdapter:
         logger.warning("⚠️  注意: TFLite 格式需要手动打包为 NE301 格式")
 
         return str(fallback_path)
-        """尝试 NE301 打包（仅在 x86_64 环境）
 
+    def _cleanup_ne301_sdk_artifacts(self, task_id: str, ne301_project_path: Path) -> None:
+        """清理 SDK 目录中的任务特定临时文件 (TFLite, JSON)
+        
         Args:
             task_id: 任务 ID
-            ne301_project_path: NE301 项目路径
-            quantized_tflite: 量化 TFLite 文件路径
-
-        Returns:
-            NE301 .bin 文件路径
-
-        Raises:
-            RuntimeError: 如果打包失败
+            ne301_project_path: SDK 项目路径
         """
         model_name = f"model_{task_id}"
-
-        # ✅ 获取宿主机路径（关键改进）
-        host_path = self._get_host_path(Path("/workspace/ne301"))
-
-        if not host_path:
-            raise RuntimeError(
-                "❌ 无法获取宿主机路径！\n"
-                "请检查：\n"
-                "1. docker-compose.yml 中是否配置了 ./ne301:/workspace/ne301\n"
-                f"2. CONTAINER_NAME 环境变量是否正确（当前: {os.environ.get('CONTAINER_NAME', '未设置')}）\n"
-                "3. Docker 套接字是否正确挂载\n"
-                "调试命令：docker inspect model-converter-api | jq '.[0].Mounts'"
-            )
-
-        logger.info(f"✓ 使用宿主机路径: {host_path}")
-
-        # 构造 Docker 命令（使用宿主机路径）
-        docker_cmd = [
-            "docker", "run", "--rm",
-            "-v", f"{host_path}:/workspace/ne301",  # ✅ 宿主机路径
-            "-w", "/workspace/ne301",
-            self.ne301_image,
-            "bash", "-c",
-            f"cd /workspace/ne301 && "
-            f"if [ ! -f Model/weights/{model_name}.tflite ]; then "
-            f"  echo '❌ Model file not found'; exit 1; "
-            f"fi && "
-            f"echo '✓ Starting NE301 build...' && "
-            f"make model && "
-            f"make pkg-model && "
-            f"echo '✓ Package created'"
+        weights_dir = ne301_project_path / "weights"
+        
+        # 尝试清理 TFLite 和 JSON
+        files_to_remove = [
+            weights_dir / f"{model_name}.tflite",
+            weights_dir / f"{model_name}.json"
         ]
-
-        logger.info(f"执行 NE301 打包命令...")
-
-        # 执行命令并实时输出日志
-        process = subprocess.Popen(
-            docker_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1
-        )
-
-        # 实时输出日志
-        output_lines = []
-        for line in process.stdout:
-            line = line.strip()
-            output_lines.append(line)
-            logger.info(f"[NE301] {line}")
-
-        process.wait(timeout=600)
-
-        if process.returncode != 0:
-            error_output = "\n".join(output_lines[-50:])  # 最后 50 行
-            raise RuntimeError(f"❌ NE301 打包失败:\n{error_output}")
-
-        # ✅ 步骤4.1: 查找生成的模型包
-        model_bin_path = ne301_project_path / "build" / "ne301_Model.bin"
-        if not model_bin_path.exists():
-            raise FileNotFoundError(f"❌ NE301 模型文件未生成: {model_bin_path}")
-
-        logger.info(f"✅ 模型包已生成: {model_bin_path}")
-
-        # ✅ 步骤4.2: 添加 OTA 固件头部
-        logger.info("步骤 4.2: 添加 OTA 固件头部...")
-
-        # ✅ 修复 OTA 版本号问题：从 version.mk 读取版本号
-        # 参考：NE301 打包环节优化计划 - 问题 2: OTA 版本号生成错误
-        try:
-            # 获取 NE301 工具链配置
-            toolchain = get_ne301_toolchain(ne301_project_path)
-            version = toolchain.get_model_version()
-            ota_version_str = '.'.join(map(str, version.to_tuple()))
-            logger.info(f"✅ 从 version.mk 读取版本号: {ota_version_str}")
-        except Exception as e:
-            logger.warning(f"⚠️  读取版本号失败: {e}，使用默认版本 3.0.0.1")
-            ota_version_str = "3.0.0.1"
-
-        # OTA 固件输出路径
-        ota_pkg_path = ne301_project_path / "build" / f"ne301_Model_v{ota_version_str}_pkg.bin"
-
-        # 调用 ota_packer.py 添加 OTA 头部
-        ota_packer_script = ne301_project_path / "Script" / "ota_packer.py"
-        if not ota_packer_script.exists():
-            logger.warning(f"⚠️  OTA 打包工具不存在: {ota_packer_script}")
-            logger.info("使用原始模型包作为备选")
-            final_bin_path = model_bin_path
-        else:
-            # 构造 OTA 打包命令
-            ota_pack_cmd = [
-                "python3",
-                str(ota_packer_script),
-                str(model_bin_path),
-                "-o", str(ota_pkg_path),
-                "-t", "ai_model",
-                "-n", "NE301_MODEL",
-                "-d", "NE301 AI Model",
-                "-v", ota_version_str
-            ]
-
-            logger.info(f"执行 OTA 打包命令...")
-            logger.info(f"  版本: {ota_version_str}")
-
-            # 执行打包
-            pack_process = subprocess.Popen(
-                ota_pack_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1
-            )
-
-            # 实时输出日志
-            pack_output = []
-            for line in pack_process.stdout:
-                line = line.strip()
-                pack_output.append(line)
-                logger.info(f"[OTA Packer] {line}")
-
-            pack_process.wait(timeout=60)
-
-            if pack_process.returncode != 0:
-                logger.warning(f"⚠️  OTA 打包失败，使用原始模型包")
-                final_bin_path = model_bin_path
-            else:
-                logger.info(f"✅ OTA 固件生成成功: {ota_pkg_path}")
-                final_bin_path = ota_pkg_path
-
-        # ✅ 步骤4.3: 复制到输出目录
-        output_dir = Path("/app/outputs")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        final_output_path = output_dir / final_bin_path.name
-        shutil.copy2(final_bin_path, final_output_path)
-
-        logger.info(f"✅ NE301 打包成功: {final_output_path}")
-        return str(final_output_path)
+        
+        for f in files_to_remove:
+            try:
+                if f.exists():
+                    f.unlink()
+                    logger.debug(f"  🧹 已清理 SDK 临时文件: {f.name}")
+            except Exception as e:
+                logger.warning(f"  ⚠️  无法清理 SDK 临时文件 {f}: {e}")
 
     def _provide_quantized_tflite_output(
         self,
@@ -1428,6 +1823,12 @@ class DockerToolChainAdapter:
         if calib_dataset_path and calib_dataset_path.endswith('.zip'):
             actual_calib_path = self._extract_calibration_dataset(calib_dataset_path)
 
+        # ⚠️ 警告：真实量化需要校准数据集
+        if not actual_calib_path:
+            logger.warning(f"[{task_id}] ⚠️  未提供校准数据集！")
+            logger.warning(f"[{task_id}]    真实量化需要校准数据集来统计激活值分布")
+            logger.warning(f"[{task_id}]    将使用假量化模式（精度可能下降）")
+
         # 创建配置文件
         config_data = {
             "model": {
@@ -1437,7 +1838,7 @@ class DockerToolChainAdapter:
                 "input_shape": [input_size, input_size, 3]
             },
             "quantization": {
-                "fake": actual_calib_path is None,  # 如果无校准数据集，使用 fake 量化
+                "fake": actual_calib_path is None,  # ⚠️ 无校准数据集时降级到假量化
                 "quantization_type": "per_channel",
                 "quantization_input_type": "uint8",
                 "quantization_output_type": "int8",
@@ -1460,8 +1861,9 @@ class DockerToolChainAdapter:
         logger.info(f"[{task_id}] ✅ 配置文件已生成: {config_path}")
         if actual_calib_path:
             logger.info(f"[{task_id}]   使用校准数据集: {actual_calib_path}")
+            logger.info(f"[{task_id}]   量化模式: 真实量化（fake=False）")
         else:
-            logger.info(f"[{task_id}]   使用 fake 量化模式")
+            logger.info(f"[{task_id}]   量化模式: 假量化（fake=True，精度可能下降）")
 
         return config_path
 

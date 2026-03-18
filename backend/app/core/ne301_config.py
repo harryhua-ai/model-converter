@@ -2,7 +2,7 @@
 NE301 工具链配置管理
 
 支持版本检测和动态适配，兼容 NE301 工具链的后续更新
-参考 AIToolStack 的实现
+参考核心转换逻辑的实现
 """
 
 import os
@@ -239,7 +239,8 @@ class NE301Toolchain:
     def get_model_version(self) -> NE301Version:
         """获取模型版本号（从 version.mk 读取）
 
-        动态读取 version.mk 中的版本号，确保与 OTA packer 一致
+        动态读取 version.mk 中的 MODEL_VERSION_OVERRIDE，确保与 OTA packer 一致
+        如果 MODEL_VERSION_OVERRIDE 未定义，则使用主版本号
         """
         version_mk = self.project_root / "version.mk"
 
@@ -251,14 +252,29 @@ class NE301Toolchain:
             with open(version_mk, 'r') as f:
                 content = f.read()
 
-            # 解析版本号
+            # ✅ 优先读取 MODEL_VERSION_OVERRIDE（如果定义）
+            model_version_match = re.search(r'MODEL_VERSION_OVERRIDE\s*:?=\s*(\d+\.\d+\.\d+\.\d+)', content)
+
+            if model_version_match:
+                # 使用 MODEL_VERSION_OVERRIDE
+                version_str = model_version_match.group(1)
+                parts = version_str.split('.')
+
+                if len(parts) == 4:
+                    major, minor, patch, build = map(int, parts)
+                    version = NE301Version(major, minor, patch, build)
+                    logger.info(f"✅ 从 version.mk 读取 MODEL_VERSION_OVERRIDE: {version}")
+                    return version
+
+            # ✅ 回退：读取主版本号
+            logger.info("MODEL_VERSION_OVERRIDE 未定义，使用主版本号")
             major = self._extract_version_var(content, "VERSION_MAJOR", 3)
             minor = self._extract_version_var(content, "VERSION_MINOR", 0)
             patch = self._extract_version_var(content, "VERSION_PATCH", 0)
             build = self._extract_version_var(content, "VERSION_BUILD", 1)
 
             version = NE301Version(major, minor, patch, build)
-            logger.info(f"✅ 从 version.mk 读取版本号: {version}")
+            logger.info(f"✅ 从 version.mk 读取主版本号: {version}")
             return version
 
         except Exception as e:
@@ -360,26 +376,32 @@ def get_ne301_toolchain(ne301_project_path: Path) -> NE301Toolchain:
     return NE301ConfigManager.get_toolchain(ne301_project_path)
 
 
-def extract_tflite_quantization_params(tflite_path: Path) -> Tuple[Optional[float], Optional[int], Optional[Tuple[int, int, int]]]:
+def extract_tflite_quantization_params(tflite_path: Path) -> Tuple[Optional[float], Optional[int], Optional[Tuple[int, int, int]], Optional[Dict]]:
     """
-    从 TFLite 模型中提取量化参数和输出维度（参考 AIToolStack）
+    从 TFLite 模型中提取量化参数、输出维度及详细信息
 
     Args:
         tflite_path: TFLite 模型文件路径
 
     Returns:
-        Tuple of (output_scale, output_zero_point, output_shape)
-        Returns (None, None, None) if extraction fails
+        Tuple of (output_scale, output_zero_point, output_shape, input_details_dict)
         All return values are converted to Python native types (JSON serializable)
     """
     if not TENSORFLOW_AVAILABLE:
         logger.warning("TensorFlow not available, cannot extract quantization parameters from TFLite model")
-        return None, None, None
+        return None, None, None, None
 
     try:
         # Load TFLite model
         interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
         interpreter.allocate_tensors()
+
+        # Get input details (for data type and shape validation)
+        input_details = interpreter.get_input_details()[0]
+        input_info = {
+            "dtype": str(input_details['dtype'].__name__),
+            "shape": [int(x) for x in input_details['shape']]
+        }
 
         # Get output tensor details
         output_details = interpreter.get_output_details()[0]  # Assume only one output
@@ -390,32 +412,24 @@ def extract_tflite_quantization_params(tflite_path: Path) -> Tuple[Optional[floa
             output_shape = tuple(int(x) for x in output_shape)
 
         # Extract quantization parameters
+        output_scale = None
+        output_zero_point = None
+
         if 'quantization_parameters' in output_details:
             quant_params = output_details['quantization_parameters']
 
-            # Extract scale and zero_point, and convert to Python native types
             if quant_params.get('scales') and len(quant_params['scales']) > 0:
-                scale_val = quant_params['scales'][0]
-                # Convert NumPy float type to Python float
-                output_scale = float(scale_val) if scale_val is not None else None
-            else:
-                output_scale = None
+                output_scale = float(quant_params['scales'][0])
 
             if quant_params.get('zero_points') and len(quant_params['zero_points']) > 0:
-                zp_val = quant_params['zero_points'][0]
-                # Convert NumPy int type to Python int
-                output_zero_point = int(zp_val) if zp_val is not None else None
-            else:
-                output_zero_point = None
+                output_zero_point = int(quant_params['zero_points'][0])
 
-            logger.info(f"✅ 从 TFLite 模型提取量化参数: scale={output_scale}, zero_point={output_zero_point}, shape={output_shape}")
-            return output_scale, output_zero_point, output_shape
-        else:
-            logger.warning("TFLite 模型输出没有量化参数")
-            return None, None, output_shape
+        logger.info(f"✅ 从 TFLite 模型提取参数: scale={output_scale}, zp={output_zero_point}, out_shape={output_shape}, in_dtype={input_info['dtype']}")
+        return output_scale, output_zero_point, output_shape, input_info
+
     except Exception as e:
-        logger.warning(f"从 TFLite 模型提取量化参数失败: {e}", exc_info=True)
-        return None, None, None
+        logger.warning(f"从 TFLite 模型提取参数失败: {e}", exc_info=True)
+        return None, None, None, None
 
 
 def generate_ne301_json_config(
@@ -428,11 +442,14 @@ def generate_ne301_json_config(
     iou_threshold: float = 0.45,
     max_detections: int = 100,
     total_boxes: Optional[int] = None,
+    postprocess_type: Optional[str] = None,
+    norm_mean: Optional[List[float]] = None,
+    norm_std: Optional[List[float]] = None,
 ) -> Dict:
     """
     生成 NE301 模型 JSON 配置
 
-    参考 AIToolStack 的实现，自动从 TFLite 模型提取量化参数
+    参考转换引擎的实现，自动从 TFLite 模型提取量化参数
 
     Args:
         tflite_path: TFLite 模型文件路径
@@ -443,81 +460,62 @@ def generate_ne301_json_config(
         confidence_threshold: 置信度阈值
         iou_threshold: IoU 阈值
         max_detections: 最大检测数
-        total_boxes: 总框数（如果为 None，将自动计算或从输出形状提取）
-
-    Returns:
-        Dict: NE301 JSON 配置
+        total_boxes: 总框数
+        postprocess_type: 后处理类型 (e.g., 'pp_od_yolo_v8_ui')，如果为 None 则根据类型自动推断
     """
-    # ⭐ 关键修复：从 TFLite 模型自动提取量化参数和输出形状
-    output_scale, output_zero_point, output_shape = extract_tflite_quantization_params(tflite_path)
+    # ⭐ 关键修复：从 TFLite 模型自动提取量化参数、输出形状和输入信息
+    # 修复解包: extract_tflite_quantization_params 现在返回 4 个值
+    output_scale, output_zero_point, output_shape, input_info = extract_tflite_quantization_params(tflite_path)
 
     # 使用默认值（如果提取失败）
-    if output_scale is None:
-        output_scale = 1.0
-        logger.warning(f"无法提取量化参数，使用默认 scale={output_scale}")
-
-    if output_zero_point is None:
-        output_zero_point = 0
-        logger.warning(f"无法提取量化参数，使用默认 zero_point={output_zero_point}")
+    output_scale = output_scale if output_scale is not None else 1.0
+    output_zero_point = output_zero_point if output_zero_point is not None else 0
+    input_dtype = input_info.get("dtype", "uint8") if input_info else "uint8"
 
     # 从输出形状提取高度和宽度
-    # output_shape format: (batch, height, width) e.g., (1, 84, 1344)
     if output_shape is not None:
         output_height = output_shape[1] if len(output_shape) > 1 else (4 + num_classes)
-        output_width = output_shape[2] if len(output_shape) > 2 else None
-        if output_width is not None and total_boxes is None:
-            total_boxes = output_width
-            logger.info(f"✅ 从输出形状提取 total_boxes={total_boxes}")
+        if total_boxes is None:
+            total_boxes = output_shape[2] if len(output_shape) > 2 else 1344
     else:
-        output_height = 4 + num_classes  # Default: 4 (bbox) + num_classes
-        logger.warning(f"无法提取输出形状，使用默认 output_height={output_height}")
-
-    # 如果没有提供 total_boxes，根据输入尺寸计算
-    if total_boxes is None:
-        # YOLOv8 的 total_boxes 计算公式
-        # YOLOv8 有 3 个检测头，stride 分别为 8, 16, 32
-        if input_size == 256:
-            total_boxes = 1344  # 3 * (32*32 + 16*16 + 8*8) = 3 * 448
-        elif input_size == 320:
-            total_boxes = 2100  # 3 * (40*40 + 20*20 + 10*10) = 3 * 700
-        elif input_size == 416:
-            total_boxes = 3549  # 3 * (52*52 + 26*26 + 13*13) = 3 * 1183
-        elif input_size == 640:
-            total_boxes = 8400  # 3 * (80*80 + 40*40 + 20*20) = 3 * 2800
-        else:
-            # 通用计算
-            scale = input_size // 8
-            total_boxes = 3 * (scale * scale + (scale // 2) ** 2 + (scale // 4) ** 2)
-        logger.info(f"✅ 计算 total_boxes={total_boxes} (input_size={input_size})")
-
-    # 确保输出高度至少为 4 + num_classes
-    if output_height < 4 + num_classes:
         output_height = 4 + num_classes
-        logger.warning(f"输出高度 {output_height} 小于预期 (4 + {num_classes})，使用计算值")
+        total_boxes = total_boxes or 1344
+
+    # 自动推断后处理类型
+    if postprocess_type is None:
+        if input_dtype.lower() in ("uint8", "uint8_t"):
+            postprocess_type = "pp_od_yolo_v8_ui"
+        else:
+            postprocess_type = "pp_od_yolo_v8_uf"
+
+    # 归一化参数逻辑 (uint8 常用 [0, 255])
+    norm_enabled = True
+    mean = norm_mean if norm_mean is not None else [0.0, 0.0, 0.0]
+    std = norm_std if norm_std is not None else [255.0, 255.0, 255.0]
 
     logger.info(f"📋 生成 JSON 配置: output_scale={output_scale}, output_zero_point={output_zero_point}, "
-                f"output_height={output_height}, total_boxes={total_boxes}")
+                f"output_height={output_height}, total_boxes={total_boxes}, in_dtype={input_dtype}, pp={postprocess_type}")
 
     return {
         "version": "1.0.0",
         "model_info": {
             "name": model_name,
             "version": "1.0.0",
-            "description": f"{model_name} - YOLOv8 Object Detection Model",
+            "description": f"{model_name} - YOLOv8 Object Detection",
             "type": "OBJECT_DETECTION",
             "framework": "TFLITE",
-            "author": "NE301 Model Converter"
+            "author": "CamThink"
         },
         "input_spec": {
             "width": input_size,
             "height": input_size,
             "channels": 3,
-            "data_type": "uint8",
+            "data_type": "uint8" if "uint8" in input_dtype.lower() else "float32",
             "color_format": "RGB888_YUV444_1",
             "normalization": {
-                "enabled": True,
-                "mean": [0.0, 0.0, 0.0],
-                "std": [255.0, 255.0, 255.0]
+                "enabled": norm_enabled,
+                "mean": mean,
+                "std": std
             }
         },
         "output_spec": {
@@ -529,9 +527,9 @@ def generate_ne301_json_config(
                     "height": output_height,
                     "width": total_boxes,
                     "channels": 1,
-                    "data_type": "int8",
-                    "scale": output_scale,          # ⭐ 使用从 TFLite 提取的真实值
-                    "zero_point": output_zero_point  # ⭐ 使用从 TFLite 提取的真实值
+                    "data_type": "int8" if output_zero_point != 0 or output_scale != 1.0 else "float32",
+                    "scale": output_scale,
+                    "zero_point": output_zero_point
                 }
             ]
         },
@@ -542,7 +540,7 @@ def generate_ne301_json_config(
             "ext_memory_size": 301056,
             "alignment_requirement": 32
         },
-        "postprocess_type": "pp_od_yolo_v8_ui",
+        "postprocess_type": postprocess_type,
         "postprocess_params": {
             "num_classes": num_classes,
             "class_names": class_names,
@@ -550,24 +548,12 @@ def generate_ne301_json_config(
             "iou_threshold": iou_threshold,
             "max_detections": max_detections,
             "total_boxes": total_boxes,
-            "raw_output_scale": output_scale,          # ⭐ 与 output_spec.scale 保持一致
-            "raw_output_zero_point": output_zero_point  # ⭐ 与 output_spec.zero_point 保持一致
+            "raw_output_scale": output_scale,
+            "raw_output_zero_point": output_zero_point
         },
         "runtime": {
-            "execution": {
-                "mode": "SYNC",
-                "priority": 5,
-                "timeout_ms": 5000
-            },
-            "memory_management": {
-                "cache_policy": "WRITE_BACK",
-                "memory_pool_size": 2097152,
-                "garbage_collection": False
-            },
-            "debugging": {
-                "log_level": "INFO",
-                "performance_monitoring": True,
-                "memory_profiling": False
-            }
+            "execution": { "mode": "SYNC", "priority": 5, "timeout_ms": 5000 },
+            "memory_management": { "cache_policy": "WRITE_BACK", "memory_pool_size": 2097152, "garbage_collection": False },
+            "debugging": { "log_level": "INFO", "performance_monitoring": True, "memory_profiling": False }
         }
     }
