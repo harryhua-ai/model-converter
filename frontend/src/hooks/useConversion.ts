@@ -61,102 +61,82 @@ export function useConversion(): UseConversionReturn {
 
   // 连接 WebSocket
   const connectWebSocket = useCallback((taskId: string) => {
-    console.log('[DEBUG] connectWebSocket 被调用, taskId:', taskId);
-
     // 关闭现有连接
     if (wsRef.current) {
-      console.log('[DEBUG] 关闭现有 WebSocket 连接');
       wsRef.current.close();
     }
 
     // 构建 WebSocket URL
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/api/ws`;
-    console.log('[DEBUG] WebSocket URL:', wsUrl);
 
-    console.log('[DEBUG] 调用 addLog(正在连接 WebSocket...)');
-    addLog('正在连接 WebSocket...');
+    addLog(t('logConnecting'));
 
-    console.log('[DEBUG] 创建 WebSocket 实例');
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
-    console.log('[DEBUG] WebSocket 实例已创建');
 
     ws.onopen = () => {
-      console.log('[DEBUG] WebSocket onopen 触发');
-      addLog('WebSocket 已连接');
+      addLog(t('logConnected'));
       // 订阅任务
       const subscribeMessage = JSON.stringify({
         action: 'subscribe',
         task_id: taskId
       });
-      console.log('[DEBUG] 发送订阅消息:', subscribeMessage);
       ws.send(subscribeMessage);
-      console.log('[DEBUG] 订阅消息已发送');
     };
 
     ws.onmessage = (event) => {
-      console.log('[DEBUG] WebSocket onmessage 触发, data:', event.data);
       try {
         const message = JSON.parse(event.data);
-        console.log('[DEBUG] 解析后的消息:', message);
 
         if (message.type === 'log') {
-          // 接收并显示日志
+          // Receive and display logs
           addLog(message.log);
         } else if (message.type === 'progress') {
-          // 更新进度
-          console.log('[DEBUG] 更新进度:', message.progress, message.step);
+          // Update progress
           updateState({
             progress: message.progress,
             currentStep: message.step
           });
         } else if (message.type === 'status') {
-          // 状态更新
-          console.log('[DEBUG] 收到状态更新:', message.data);
+          // Status update
           const status = message.data?.status;
           if (status === 'completed') {
-            console.log('[DEBUG] 任务完成，更新状态');
             updateState({
               isConverting: false,
               progress: message.data?.progress || 100,
               currentStep: message.data?.current_step || 'Completed',
               status: 'completed'
             });
-            addLog('✅ 转换完成');
+            addLog(t('logCompleted'));
           } else if (status === 'failed') {
-            console.log('[DEBUG] 任务失败');
             updateState({
               isConverting: false,
               error: message.data?.error || t('errorTitle'),
               status: 'failed'
             });
-            addLog(`❌ 转换失败: ${message.data?.error || '未知错误'}`);
+            addLog(t('logFailed', { error: message.data?.error || t('errorUnknown') }));
           } else {
-            // 其他状态（如 running, pending）
-            console.log('[DEBUG] 任务状态:', status);
+            // Other statuses (running, pending)
             updateState({
               progress: message.data?.progress || 0,
               currentStep: message.data?.current_step || ''
             });
           }
         } else if (message.type === 'error') {
-          console.log('[DEBUG] 收到错误消息');
-          addLog(`错误: ${message.data?.message || '未知错误'}`);
+          addLog(t('logError', { message: message.data?.message || t('errorUnknown') }));
         }
       } catch (err) {
-        console.error('WebSocket 消息解析失败:', err);
+        // Failed to parse WebSocket message
       }
     };
 
     ws.onerror = (error) => {
-      console.error('[DEBUG] WebSocket onerror 触发:', error);
-      addLog('WebSocket 连接错误');
+      addLog(t('logWsError'));
     };
 
     ws.onclose = () => {
-      console.log('[DEBUG] WebSocket onclose 触发');
-      addLog('WebSocket 连接关闭');
+      addLog(t('logWsClosed'));
       wsRef.current = null;
     };
 
@@ -179,10 +159,8 @@ export function useConversion(): UseConversionReturn {
       yamlFile?: File,
       calibrationFile?: File
     ) => {
-      console.log('[DEBUG] startConversion 开始执行');
       try {
         // 重置状态
-        console.log('[DEBUG] 重置状态');
         updateState({
           isConverting: true,
           isCancelling: false,
@@ -193,11 +171,9 @@ export function useConversion(): UseConversionReturn {
           status: 'converting',
         });
 
-        console.log('[DEBUG] 调用 addLog(welcomeMsg)');
         addLog(t('welcomeMsg'));
 
         // 上传模型并启动转换
-        console.log('[DEBUG] 准备上传模型');
         const response = await modelApi.uploadModel(
           modelFile,
           config,
@@ -205,25 +181,20 @@ export function useConversion(): UseConversionReturn {
           calibrationFile
         );
         const taskId = response.task_id;
-        console.log('[DEBUG] 收到 taskId:', taskId);
 
-        console.log('[DEBUG] 调用 addLog(任务已创建)');
-        addLog(`任务已创建: ${taskId}`);
+        addLog(t('logTaskCreated', { taskId }));
         updateState({ taskId });
 
-        // 连接 WebSocket 接收实时日志
-        console.log('[DEBUG] 准备连接 WebSocket, taskId:', taskId);
+        // Connect to WebSocket for real-time logs
         connectWebSocket(taskId);
-        console.log('[DEBUG] connectWebSocket 调用完成');
       } catch (error) {
-        console.error('[DEBUG] startConversion 捕获到错误:', error);
         const errorMessage = error instanceof Error ? error.message : t('errorTitle');
         updateState({
           isConverting: false,
           error: errorMessage,
           status: 'failed',
         });
-        addLog(`错误: ${errorMessage}`);
+        addLog(t('logError', { message: errorMessage }));
       }
     },
     [updateState, addLog, connectWebSocket, t]
@@ -234,7 +205,7 @@ export function useConversion(): UseConversionReturn {
 
     try {
       updateState({ isCancelling: true });
-      addLog('Cancelling task...');
+      addLog(t('logCancelling'));
 
       await modelApi.cancelTask(state.taskId);
 
@@ -245,30 +216,30 @@ export function useConversion(): UseConversionReturn {
         taskId: null,
       });
 
-      addLog('Task cancelled');
+      addLog(t('logCancelled'));
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : t('errorTitle');
       updateState({ isCancelling: false });
-      addLog(`Cancellation failed: ${errorMessage}`);
+      addLog(t('logCancelFailed', { error: errorMessage }));
       throw error;
     }
-  }, [state.taskId, updateState, addLog]);
+  }, [state.taskId, updateState, addLog, t]);
 
   const downloadResult = useCallback(async () => {
     if (!state.taskId) return;
 
     try {
-      addLog('Downloading converted model...');
+      addLog(t('logDownloading'));
       const blob = await modelApi.downloadModel(state.taskId);
       const filename = `converted_model_${state.taskId}.bin`;
       downloadFile(blob, filename);
-      addLog(`✅ Downloaded: ${filename}`);
+      addLog(t('logDownloaded', { filename }));
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : t('errorTitle');
-      addLog(`Download failed: ${errorMessage}`);
+      addLog(t('logDownloadFailed', { error: errorMessage }));
       throw error;
     }
-  }, [state.taskId, addLog]);
+  }, [state.taskId, addLog, t]);
 
   const reset = useCallback(() => {
     setState({

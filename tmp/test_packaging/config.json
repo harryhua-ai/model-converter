@@ -1,0 +1,1 @@
+{"model_info": {"name": "test_model", "version": "1.0.0"}, "input_spec": {"width": 256, "height": 256, "channels": 3, "data_type": "uint8"}, "output_spec": [{"name": "output0", "shape": [1, 84, 8400], "data_type": "float32"}], "postprocess": {"type": "pp_od_yolo_v8_ui", "params": {}}}

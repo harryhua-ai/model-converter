@@ -19,6 +19,10 @@ class ConversionConfig(BaseModel):
     input_size: Literal[256, 480, 640] = 480
     num_classes: int = Field(default=80, ge=1, le=1000)
     confidence_threshold: float = Field(default=0.25, ge=0.01, le=0.99)
+    iou_threshold: float = Field(default=0.45, ge=0.01, le=0.99)
+    postprocess_type: Optional[str] = Field(default=None, description="强制指定的后处理类型")
+    normalization_mean: Optional[list[float]] = Field(default=None, description="均值归一化参数")
+    normalization_std: Optional[list[float]] = Field(default=None, description="标准差归一化参数")
     quantization: Literal["int8"] = "int8"
     use_calibration: bool = False
 
@@ -44,6 +48,7 @@ class ConversionTask(BaseModel):
     status: Literal["pending", "running", "completed", "failed"]
     progress: int = Field(default=0, ge=0, le=100)
     current_step: str = ""
+    logs: list[str] = Field(default_factory=list)
     config: ConversionConfig
     created_at: datetime
     updated_at: datetime

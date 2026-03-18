@@ -31,6 +31,15 @@ async def lifespan(app: FastAPI):
 
     # 验证配置加载
     from .core.config import settings
+    import asyncio
+    from .core.task_manager import get_task_manager
+    
+    # ✅ FIX: 捕获主事件循环并存储到 TaskManager
+    # 这确保了在后台线程（如 Docker 任务）中也能正确通过 WebSocket 发送消息
+    task_manager = get_task_manager()
+    task_manager._main_loop = asyncio.get_running_loop()
+    logger.info(f"✅ 已捕获主事件循环: {task_manager._main_loop}")
+    
     logger.info(f"✅ 配置已加载")
     logger.info(f"   - API: {settings.HOST}:{settings.PORT}{settings.API_PREFIX}")
     logger.info(f"   - Docker: {settings.NE301_DOCKER_IMAGE}")

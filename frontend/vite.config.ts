@@ -1,8 +1,23 @@
 import { defineConfig } from 'vite';
-import preact from '@preact/preset-vite';
 
 export default defineConfig({
-  plugins: [preact()],
+  // 移除 esbuild 配置，使用默认的 Babel 转换
+  // esbuild: {
+  //   jsx: 'automatic',
+  //   jsxImportSource: 'preact',
+  // },
+  resolve: {
+    alias: {
+      react: 'preact/compat',
+      'react-dom': 'preact/compat',
+    },
+  },
+  resolve: {
+    alias: {
+      react: 'preact/compat',
+      'react-dom': 'preact/compat',
+    },
+  },
   server: {
     port: 3000,
     proxy: {

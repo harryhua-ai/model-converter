@@ -13,6 +13,9 @@ services:
       - uploads:/app/uploads:rw
       - outputs:/app/outputs:rw
       - ./ne301:/workspace/ne301:rw
+      # 开发模式：挂载代码目录实现热重载
+      - ./backend/app:/app/app:ro
+      - ./backend/tools:/app/tools:ro
     environment:
       - NE301_DOCKER_IMAGE=camthink/ne301-dev:latest
       - NE301_PROJECT_PATH=/workspace/ne301

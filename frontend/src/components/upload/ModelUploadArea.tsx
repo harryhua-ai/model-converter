@@ -19,14 +19,14 @@ export default function ModelUploadArea({ onFileSelect, selectedFile }: ModelUpl
     const hasValidExtension = validExtensions.some(ext => fileName.endsWith(ext));
 
     if (!hasValidExtension) {
-      setError('文件格式不支持。请上传 .pt、.pth 或 .onnx 文件。');
+      setError(t('errorInvalidModelFormat'));
       return false;
     }
 
     // 检查文件大小（500MB = 500 * 1024 * 1024 bytes）
     const maxSize = 500 * 1024 * 1024;
     if (file.size > maxSize) {
-      setError('文件大小超过限制。最大支持 500MB。');
+      setError(t('errorModelTooLarge'));
       return false;
     }
 

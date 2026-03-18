@@ -118,11 +118,29 @@ async def websocket_endpoint(websocket: WebSocket):
             # 订阅任务进度
             await manager.connect(websocket, task_id)
             
-            # 发送当前任务状态
             task_manager = get_task_manager()
             task = task_manager.get_task(task_id)
             
             if task:
+                # 💡 修复绻端条件：先发送历史日志，再发送状态，避免客户端在收到日志前就因状态而关闭
+                if task.logs:
+                    logger.info(f"正在重播 {len(task.logs)} 条历史日志给 task_id={task_id}")
+                    for log in task.logs:
+                        await manager.send_personal_message({
+                            "type": "log",
+                            "task_id": task_id,
+                            "log": log,
+                            "timestamp": task.created_at.isoformat(),
+                            "replayed": True  # 标识为重播日志
+                        }, websocket)
+                    # 发送重播结束标志
+                    await manager.send_personal_message({
+                        "type": "replay_end",
+                        "task_id": task_id,
+                        "count": len(task.logs)
+                    }, websocket)
+                
+                # 历史日志发完后再发送当前状态
                 await manager.send_personal_message({
                     "type": "status",
                     "task_id": task_id,

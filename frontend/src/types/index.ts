@@ -13,6 +13,7 @@ export interface ConversionConfig {
   input_size: 256 | 480 | 640;
   num_classes: number;
   confidence_threshold: number;
+  iou_threshold: number;
   quantization: 'int8';
   use_calibration: boolean;
 }

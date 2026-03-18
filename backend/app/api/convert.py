@@ -141,6 +141,10 @@ async def convert_model(
         # 2. 解析并验证配置 JSON
         try:
             config_dict = json.loads(config)
+            # 如果提供了校准数据集，强制设置 use_calibration 为 True
+            if calibration_dataset:
+                config_dict["use_calibration"] = True
+                logger.info("✅ 检测到校准数据集，已开启 use_calibration")
         except json.JSONDecodeError:
             raise HTTPException(
                 status_code=400,
@@ -268,16 +272,18 @@ async def convert_model(
                 logger.info(f"校准数据集已保存: {calibration_dataset.filename}")
 
             # 7. 创建任务
-            logger.info(f"[DEBUG] 准备创建任务，validated_config 类型: {type(validated_config)}")
             task_manager = get_task_manager()
             task_id = task_manager.create_task(validated_config)
-            logger.info(f"[DEBUG] 任务创建成功: {task_id}")
-
-            logger.info(f"创建转换任务: {task_id}")
-            logger.info(f"模型文件: {model_file.filename}")
-            logger.info(f"配置: {validated_config.model_type}, {validated_config.input_size}x{validated_config.input_size}")
-            if calibration_path:
-                logger.info(f"校准数据集: {calibration_dataset.filename}")
+            
+            # 💡 [实时日志] 立即添加初始化日志，确保用户在点击后立刻看到反馈
+            # 这些日志会存入任务历史，在 WebSocket 连接建立后会被重播
+            task_manager.add_log(task_id, f"🚀 转换任务已接收 (ID: {task_id})")
+            task_manager.add_log(task_id, f"📁 模型文件: {model_file.filename}")
+            task_manager.add_log(task_id, f"⚙️ 配置: {validated_config.model_type}, imgsz={validated_config.input_size}")
+            if calibration_path and calibration_dataset:
+                task_manager.add_log(task_id, f"📊 已加载校准数据集: {calibration_dataset.filename}")
+            
+            task_manager.add_log(task_id, "🔧 正在准备工作环境...")
 
             # 8. 启动后台转换任务
             logger.info(f"[DEBUG] 准备启动后台任务: {task_id}")
@@ -398,7 +404,3 @@ async def _run_conversion(
         logger.error(traceback.format_exc())
         task_manager.fail_task(task_id, str(e))
         raise
-
-@router.get("/test")
-async def test_endpoint():
-    return {"message": "Test works!"}

@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'preact/hooks';
 import { FileArchive, AlertCircle, CheckCircle } from 'lucide-preact';
+import { useI18nStore } from '../../store/i18n';
 
 interface Props {
   onFileSelect: (file: File) => void;
@@ -12,6 +13,7 @@ export default function CalibrationUploadArea({
   accept = '.zip',
   maxSize = 1024 * 1024 * 1024, // 1GB
 }: Props) {
+  const { t } = useI18nStore();
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string>('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -48,13 +50,13 @@ export default function CalibrationUploadArea({
 
     // 验证文件格式
     if (!file.name.endsWith('.zip')) {
-      setError('校准数据集必须是 ZIP 格式');
+      setError(t('errorInvalidZipFormat') || 'Only .zip supported');
       return;
     }
 
     // 验证文件大小
     if (file.size > maxSize) {
-      setError(`文件过大 (${(file.size / 1024 / 1024).toFixed(2)}MB)，最大支持 ${maxSize / 1024 / 1024}MB`);
+      setError(t('errorModelTooLarge'));
       return;
     }
 
@@ -112,15 +114,15 @@ export default function CalibrationUploadArea({
             />
           </div>
           <p className="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">
-            上传校准数据集（可选）
+            {t('dragDropZip')}
           </p>
           <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
-            拖拽 ZIP 文件到此处或点击选择
+            {t('supportFormatZip')}
           </p>
           <div className="text-xs text-gray-400 dark:text-gray-500 space-y-1">
-            <div>• 格式: .zip</div>
-            <div>• 大小: 最大 1GB</div>
-            <div>• 推荐: 32-100 张图片</div>
+            <div>• Format: .zip</div>
+            <div>• Size: Max 1GB</div>
+            <div>• Rec: 32-100 images</div>
           </div>
         </div>
       ) : (
@@ -142,7 +144,7 @@ export default function CalibrationUploadArea({
               onClick={handleRemove}
               className="text-sm text-error-600 hover:text-error-700 dark:text-error-400 dark:hover:text-error-300 font-medium px-3 py-1 rounded-lg hover:bg-error-50 dark:hover:bg-error-950/20 transition-colors"
             >
-              移除
+              {t('changeFile')}
             </button>
           </div>
         </div>

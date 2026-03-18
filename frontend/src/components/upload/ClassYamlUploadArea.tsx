@@ -30,7 +30,7 @@ export default function ClassYamlUploadArea({
     // 检查文件格式
     const fileName = file.name.toLowerCase();
     if (!fileName.endsWith('.yaml') && !fileName.endsWith('.yml')) {
-      setError('文件格式不支持。请上传 .yaml 或 .yml 文件。');
+      setError(t('errorInvalidYamlFormat'));
       return false;
     }
 
@@ -69,7 +69,7 @@ export default function ClassYamlUploadArea({
           onClassDetected?.(numClasses, names);
         }
       } catch (err) {
-        console.warn('YAML 解析失败:', err);
+        console.warn('YAML parse failed:', err);
         // 不阻塞文件选择，只是无法自动提取类别信息
       }
     };
@@ -131,7 +131,7 @@ export default function ClassYamlUploadArea({
           {t('step2Title')}
         </label>
         <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-          {t('step3Desc')}
+          {t('step2Desc')}
         </p>
       </div>
 
@@ -207,22 +207,8 @@ export default function ClassYamlUploadArea({
                 </div>
                 <div className="flex-1">
                   <p className="text-sm font-semibold text-success-800 dark:text-success-200 mb-1">
-                    已识别 {parsedClasses.numClasses} 个类别
+                    {t('detectedClasses', { count: parsedClasses.numClasses })}
                   </p>
-                  <p className="text-xs text-success-700 dark:text-success-300 mb-2">
-                    类别列表: {parsedClasses.names.slice(0, 5).join(', ')}
-                    {parsedClasses.names.length > 5 && ' ...'}
-                  </p>
-                  <details className="text-xs text-success-700 dark:text-success-300">
-                    <summary className="cursor-pointer hover:text-success-900 dark:hover:text-success-100">查看完整列表</summary>
-                    <div className="mt-2 pl-4 border-l-2 border-success-300 dark:border-success-700">
-                      {parsedClasses.names.map((name, idx) => (
-                        <div key={idx}>
-                          {idx + 1}. {name}
-                        </div>
-                      ))}
-                    </div>
-                  </details>
                 </div>
               </div>
             </div>

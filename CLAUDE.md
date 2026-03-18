@@ -568,7 +568,20 @@ async def test_convert_endpoint():
 
 ## 部署指南
 
+**⚠️ 重要**: 修改代码后如何生效？请先阅读 [Docker 开发指南](docs/DOCKER_DEVELOPMENT_GUIDE.md)
+
+**关键要点**:
+- **开发模式**: 使用代码挂载，修改 Python 代码后只需 `docker-compose restart api` 即可生效（~2 秒）
+- **生产模式**: 代码烘焙到镜像
+修改后需要 `docker-compose build api && docker-compose up -d`（~5-10 分钟）
+- **何时重建**: 修改 `requirements.txt`、`frontend/` 或 `Dockerfile` 时必须重新构建镜像
+
 ### Docker 容器化部署（推荐）
+
+**重要**: 修改代码后如何生效？请参考 [Docker 开发指南](docs/DOCKER_DEVELOPMENT_GUIDE.md)
+
+- **开发模式（代码挂载）**: 修改 Python 代码后只需 `docker-compose restart api`
+- **生产模式（镜像内置）**: 修改代码后需要 `docker-compose build api`
 
 **架构说明**:
 - **单容器部署**: 前端和后端集成在一个 Docker 镜像中
@@ -1057,4 +1070,8 @@ A: 可以：
 
 **最后更新**: 2025-03-13
 **文档版本**: 2.0.0
-**架构版本**: Docker 化架构 (参考 AIToolStack)
+### 架构设计
+本项目采用了成熟的容器化模型转换架构，主要流程如下：
+- **项目结构**: 遵循嵌入式 AI 工具链的标准组织方式
+- **逻辑分层**: 适配层、核心转换层与打包层解耦
+**架构版本**: Docker 化架构 (已针对 NE301 优化)

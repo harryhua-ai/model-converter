@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE: int = 524288000  # 500MB
 
     # 日志配置
-    LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "DEBUG"
 
     # 安全修复: HIGH-2026-005 - CORS 配置
     # 允许的跨域来源列表（逗号分隔）

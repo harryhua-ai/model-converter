@@ -9,22 +9,9 @@ export const PRESETS: Record<string, Omit<ConversionConfig, 'num_classes'>> = {
     model_type: 'YOLOv8',
     input_size: 256,
     confidence_threshold: 0.25,
+    iou_threshold: 0.45,
     quantization: 'int8',
     use_calibration: false,
-  },
-  '320x320': {
-    model_type: 'YOLOv8',
-    input_size: 320,
-    confidence_threshold: 0.25,
-    quantization: 'int8',
-    use_calibration: true,
-  },
-  '480x480': {
-    model_type: 'YOLOv8',
-    input_size: 480,
-    confidence_threshold: 0.25,
-    quantization: 'int8',
-    use_calibration: true,
   },
 };
 
@@ -40,9 +27,11 @@ interface AppState {
   // 配置
   selectedPreset: string;
   numClasses: number;
+  classList: string[];
   modelType: 'YOLOv8' | 'YOLOX';
-  inputSize: 256 | 320 | 480;
+  inputSize: 256 | 480 | 640;
   confidenceThreshold: number;
+  iouThreshold: number;
   quantization: 'int8';
   useCalibration: boolean;
 
@@ -59,9 +48,11 @@ interface AppState {
   setSelectedCalibration: (file: File | null) => void;
   setSelectedPreset: (preset: string) => void;
   setNumClasses: (numClasses: number) => void;
+  setClassList: (classes: string[]) => void;
   setModelType: (modelType: 'YOLOv8' | 'YOLOX') => void;
-  setInputSize: (size: 256 | 320 | 480) => void;
+  setInputSize: (size: 256 | 480 | 640) => void;
   setConfidenceThreshold: (threshold: number) => void;
+  setIouThreshold: (threshold: number) => void;
   setQuantization: (quantization: 'int8') => void;
   setUseCalibration: (useCalibration: boolean) => void;
   setConversionStatus: (status: 'idle' | 'converting' | 'completed' | 'failed') => void;
@@ -80,13 +71,15 @@ const initialState = {
   selectedFile: null,
   selectedYaml: null,
   selectedCalibration: null,
-  selectedPreset: 'balanced',
+  selectedPreset: '256x256',
   numClasses: 80,
+  classList: [],
   modelType: 'YOLOv8' as const,
-  inputSize: 480 as const,
+  inputSize: 256 as const,
   confidenceThreshold: 0.25,
+  iouThreshold: 0.45,
   quantization: 'int8' as const,
-  useCalibration: true,
+  useCalibration: false,
   conversionStatus: 'idle' as const,
   currentTask: null,
   showLogs: false,
@@ -112,6 +105,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         modelType: presetConfig.model_type,
         inputSize: presetConfig.input_size,
         confidenceThreshold: presetConfig.confidence_threshold,
+        iouThreshold: presetConfig.iou_threshold,
         quantization: presetConfig.quantization,
         useCalibration: presetConfig.use_calibration,
       });
@@ -119,12 +113,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setNumClasses: (numClasses) => set({ numClasses }),
+  
+  setClassList: (classList) => set({ classList }),
 
   setModelType: (modelType) => set({ modelType }),
 
   setInputSize: (inputSize) => set({ inputSize }),
 
   setConfidenceThreshold: (confidenceThreshold) => set({ confidenceThreshold }),
+
+  setIouThreshold: (iouThreshold) => set({ iouThreshold }),
 
   setQuantization: (quantization) => set({ quantization }),
 
@@ -145,6 +143,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       input_size: state.inputSize,
       num_classes: state.numClasses,
       confidence_threshold: state.confidenceThreshold,
+      iou_threshold: state.iouThreshold,
       quantization: state.quantization,
       use_calibration: state.useCalibration,
     };
