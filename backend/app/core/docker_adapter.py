@@ -1061,43 +1061,63 @@ class DockerToolChainAdapter:
         else:
             logger.warning(f"⚠️  Model/Makefile 不存在: {model_makefile}")
 
-        # ✅ [优化] 压缩二进制大小：修改内存池配置
-        # 同时修改 yolov8_od 和 reloc-ro 相关的 mpool 确保生效
-        for mpool_name in ["stm32n6_reloc_yolov8_od.mpool", "stm32n6_reloc_ro.mpool"]:
-            mpool_file = ne301_project / "Model" / "mpools" / mpool_name
-            if mpool_file.exists():
-                try:
-                    lines = mpool_file.read_text().splitlines()
-                    new_lines = []
-                    context = None
-                    
-                    for line in lines:
-                        if '"name":' in line:
-                            if '"hyperRAM"' in line:
-                                context = "hyperRAM"
-                            elif '"octoFlash"' in line:
-                                context = "octoFlash"
-                            else:
-                                context = None
-                                
-                        if context == "hyperRAM" and '"constants_preferred":' in line:
-                            line = line.replace('"true"', '"false"')
-                        elif context == "octoFlash":
-                            if '"constants_preferred":' in line:
-                                line = line.replace('"false"', '"true"')
-                            if '"size":' in line and '"value": "0"' in line:
-                                line = line.replace('"value": "0"', '"value": "64"')
-                                
-                        new_lines.append(line)
-                    
-                    content = "\n".join(new_lines)
-                    if content != mpool_file.read_text():
-                        mpool_file.write_text(content)
-                        logger.info(f"✅ 已成功优化内存池配置 ({mpool_name})")
-                    else:
-                        logger.warning(f"⚠️  未检测到需要修改的内存池配置 ({mpool_name})")
-                except Exception as e:
-                    logger.warning(f"⚠️  优化内存池 {mpool_name} 失败: {e}")
+        # 📋 诊断并修复 mpool 配置
+        # 问题：原始 NE301 仓库的 mpool 配置中，xSPI2 size=0 但 constants_preferred=true
+        # 这导致编译器选择 xSPI2 但无法分配内存（ext_ram_sz=0），引发 OOM
+        # 修复：将 xSPI2 的 constants_preferred 改为 false，让编译器使用 xSPI1 (8MB RAM)
+        mpool_name = "stm32n6_reloc_yolov8_od.mpool"
+        mpool_file = ne301_project / "Model" / "mpools" / mpool_name
+        if mpool_file.exists():
+            try:
+                mpool_data = json.loads(mpool_file.read_text())
+
+                # 诊断当前配置
+                xspi1_config = None
+                xspi2_config = None
+
+                for pool in mpool_data.get('memory', {}).get('mempools', []):
+                    fname = pool.get('fname', '')
+                    if fname == 'xSPI1':
+                        xspi1_config = {
+                            'size': pool['size'],
+                            'constants_preferred': pool['prop'].get('constants_preferred')
+                        }
+                    elif fname == 'xSPI2':
+                        xspi2_config = {
+                            'size': pool['size'],
+                            'constants_preferred': pool['prop'].get('constants_preferred')
+                        }
+
+                logger.info(f"📋 mpool 配置诊断:")
+                logger.info(f"  - xSPI1 (hyperRAM): size={xspi1_config['size']['value']}{xspi1_config['size']['magnitude']}, constants_preferred={xspi1_config['constants_preferred']}")
+                logger.info(f"  - xSPI2 (octoFlash): size={xspi2_config['size']['value']}{xspi2_config['size']['magnitude']}, constants_preferred={xspi2_config['constants_preferred']}")
+
+                # 检测并修复问题配置
+                xspi2_size_mb = int(xspi2_config['size']['value'])
+                xspi2_const_pref = xspi2_config['constants_preferred']
+
+                if xspi2_size_mb == 0 and xspi2_const_pref == 'true':
+                    logger.warning("⚠️  检测到 mpool 配置问题:")
+                    logger.warning("  💡 xSPI2 size=0 但 constants_preferred=true")
+                    logger.warning("  💡 这会导致编译器选择 xSPI2 但无法分配内存")
+                    logger.warning("  💡 修复：将 xSPI2 constants_preferred 改为 false")
+
+                    # 修复配置
+                    for pool in mpool_data.get('memory', {}).get('mempools', []):
+                        if pool.get('fname') == 'xSPI2':
+                            pool['prop']['constants_preferred'] = 'false'
+
+                    # 写回文件
+                    mpool_file.write_text(json.dumps(mpool_data, indent='\t'))
+                    logger.info("✅ 已修复 mpool 配置: xSPI2 constants_preferred -> false")
+                    logger.info("✅ 编译器将使用 xSPI1 (8MB RAM) 存储模型参数")
+                else:
+                    logger.info("✅ mpool 配置正确，无需修改")
+
+            except Exception as e:
+                logger.warning(f"⚠️  mpool 配置处理失败: {e}")
+        else:
+            logger.warning(f"⚠️  mpool 文件不存在: {mpool_file}")
 
         logger.info(f"✅ 模型文件已准备: {model_name}.tflite")
         logger.info(f"✅ JSON 配置已生成: {model_name}.json")
